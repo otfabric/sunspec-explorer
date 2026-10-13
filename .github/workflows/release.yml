@@ -1,0 +1,371 @@
+name: Release
+
+run-name: Release (${{ inputs.bump }}) from ${{ github.ref_name }}
+
+# Run it by hand from the Actions tab, as in the other otfabric repositories:
+#
+#   bump = patch | minor | major   the latest v* tag plus the bump; without
+#                                  any tag, "patch" makes v0.0.1. Builds
+#                                  everything, tags the commit and publishes
+#                                  the GitHub release.
+#   bump = none                    rebuilds and replaces the files of the
+#                                  latest existing tag.
+#
+# Release notes follow the organisation's convention (the same extraction as
+# otfabric/.github go-binary-release): the "## v<version>" section of
+# RELEASE.md, up to the next line that is exactly "---". Without such a
+# section the notes are the commit list since the previous tag.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Prepare: resolve the version. The checks themselves run in build.yml.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+      mode: ${{ steps.version.outputs.mode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify default branch
+        if: inputs.bump != 'none'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CURRENT_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$CURRENT_REF" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::Bumped releases are only allowed from the default branch ($DEFAULT_BRANCH). Current: $CURRENT_REF."
+            exit 1
+          fi
+
+      - name: Resolve version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          case "$BUMP" in
+            none|patch|minor|major) ;;
+            *)
+              echo "::error::Invalid bump strategy: $BUMP (expected none, patch, minor, or major)"
+              exit 1
+              ;;
+          esac
+
+          latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)"
+
+          if [ "$BUMP" = "none" ]; then
+            if [ -z "$latest_tag" ]; then
+              echo "::error::bump=none requires an existing semver tag, but none was found"
+              exit 1
+            fi
+
+            tag="$latest_tag"
+            version="${tag#v}"
+            previous_tag="$latest_tag"
+            mode="existing"
+          else
+            if [ -z "$latest_tag" ]; then
+              latest_tag="v0.0.0"
+            fi
+
+            base_version="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "$base_version"
+
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+            esac
+
+            version="${major}.${minor}.${patch}"
+            tag="v${version}"
+            previous_tag="$latest_tag"
+            mode="new"
+          fi
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Resolved version is not valid semver: $version"
+            exit 1
+          fi
+
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version"           >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"                   >> "$GITHUB_OUTPUT"
+          echo "mode=$mode"                 >> "$GITHUB_OUTPUT"
+
+      - name: Fail if new tag already exists
+        if: inputs.bump != 'none'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Tags are immutable; choose a different bump."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build: every check and every deliverable, as in CI, with the real version.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      publish-image: true
+
+  # ---------------------------------------------------------------------------
+  # Release: tag, GitHub release, assets, container image.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      IMAGE: ghcr.io/otfabric/sunspec-explorerd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Generate release notes
+        id: notes
+        env:
+          PREV_TAG: ${{ needs.prepare.outputs.previous_tag }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/release-notes.md"
+          used_release_md="false"
+
+          if [ -f RELEASE.md ]; then
+            awk -v target="## ${TAG}" '
+              $0 == target { found=1; next }
+              found && /^---$/ { exit }
+              found { print }
+            ' RELEASE.md > "$out"
+
+            if [ -s "$out" ]; then
+              used_release_md="true"
+            fi
+          fi
+
+          if [ "$used_release_md" = "false" ]; then
+            if [ "$MODE" = "existing" ]; then
+              {
+                echo "## Rebuilt release assets for ${TAG}"
+                echo
+                echo "Release assets rebuilt and uploaded for ${TAG}."
+              } > "$out"
+            else
+              {
+                echo "## Changes since ${PREV_TAG}"
+                echo
+                if [ "$PREV_TAG" = "v0.0.0" ]; then
+                  git log --pretty=format:"- %s (%h)"
+                else
+                  git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)"
+                fi
+              } > "$out"
+            fi
+          fi
+
+          echo "file=$out"                        >> "$GITHUB_OUTPUT"
+          echo "used_release_md=$used_release_md" >> "$GITHUB_OUTPUT"
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: artifacts
+
+      - name: Verify the deliverables
+        run: |
+          set -euo pipefail
+          # The Windows arm64 desktop build is best effort and may be missing;
+          # everything else must be there.
+          for f in \
+            sunspec-explorerd-$VERSION-linux-amd64.tar.gz sunspec-explorerd-$VERSION-linux-arm64.tar.gz sunspec-explorerd-$VERSION-linux-armv7.tar.gz \
+            sunspec-explorer-$VERSION-darwin-arm64.zip sunspec-explorer-$VERSION-darwin-amd64.zip \
+            sunspec-explorer-$VERSION-windows-amd64.zip \
+            sunspec-explorer-$VERSION-linux-amd64.tar.gz sunspec-explorer-$VERSION-linux-arm64.tar.gz; do
+            if [ -z "$(find artifacts -type f -name "$f" -size +0)" ]; then
+              echo "::error::missing $f"
+              exit 1
+            fi
+          done
+
+      - name: Generate SHA-256 checksums
+        id: checksums
+        run: |
+          set -euo pipefail
+          checksums="$RUNNER_TEMP/sunspec-explorer-${VERSION}-checksums.txt"
+
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | while read -r file; do
+            ( cd "$(dirname "$file")" && sha256sum "$(basename "$file")" )
+          done > "$checksums"
+
+          echo "Generated checksums:"
+          cat "$checksums"
+          echo "file=$checksums" >> "$GITHUB_OUTPUT"
+
+      - name: Build provenance of the downloads
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-digest-*
+          path: digests
+          merge-multiple: true
+      - name: Join the three architectures under one image tag
+        id: image
+        working-directory: digests
+        run: |
+          set -euo pipefail
+          test "$(ls | wc -l)" = 3
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:latest" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
+      - name: Build provenance of the image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create and push annotated tag
+        if: inputs.bump != 'none'
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG" "$SHA"
+          git push origin "refs/tags/$TAG"
+
+      - name: Check whether release already exists
+        id: release_exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        if: steps.release_exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            --target "$SHA"
+
+      - name: Update release notes (existing release)
+        if: steps.release_exists.outputs.exists == 'true' && inputs.bump == 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHECKSUMS_FILE: ${{ steps.checksums.outputs.file }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            gh release upload "$TAG" "$file" --clobber
+          done < <(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0)
+
+          gh release upload "$TAG" "$CHECKSUMS_FILE" --clobber
+
+      - name: Release summary
+        env:
+          BUMP: ${{ inputs.bump }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+          PREV_TAG: ${{ needs.prepare.outputs.previous_tag }}
+          USED_RELEASE_MD: ${{ steps.notes.outputs.used_release_md }}
+          RELEASE_EXISTED: ${{ steps.release_exists.outputs.exists }}
+        run: |
+          {
+            echo "## Release Summary"
+            echo
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Repository | \`${{ github.repository }}\` |"
+            echo "| Bump | $BUMP |"
+            echo "| Mode | $MODE |"
+            echo "| Previous tag | $PREV_TAG |"
+            echo "| Version | $VERSION |"
+            echo "| Tag | $TAG |"
+            echo "| Image | \`$IMAGE:$VERSION\` |"
+            echo "| Notes from RELEASE.md | $USED_RELEASE_MD |"
+            echo "| Release existed | $RELEASE_EXISTED |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,12 @@
+# The image is built from the sources: nothing built on the host goes in.
+.git
+.github
+.claude
+bin
+release
+docs
+coverage.*
+**/node_modules
+frontend/dist
+**/*_test.go
+**/.DS_Store

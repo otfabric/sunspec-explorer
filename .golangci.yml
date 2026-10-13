@@ -1,0 +1,60 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unchecked errors
+    - govet          # go vet checks (shadow, printf, etc.)
+    - ineffassign    # assigned but never used
+    - staticcheck    # comprehensive static analysis (includes gosimple + unused)
+    - misspell       # common spelling mistakes
+    - godot          # comment punctuation
+    - nilerr         # return nil instead of err
+    - exhaustive     # exhaustive switch on enums
+    - forbidigo      # read-only: no Modbus writes, no device simulation (R11)
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true  # a default: case satisfies exhaustiveness
+    forbidigo:
+      # Match on types, so that a renamed import or a method value is caught too.
+      analyze-types: true
+      forbid:
+        # The Explorer is read-only. Outside tests the only Modbus requests are
+        # FC03/FC04 register reads, made by go-sunspec or with ReadRegisters.
+        # Everything else a client can send is banned here; internal/readonly
+        # blocks it at run time as well, and the wire test proves it.
+        - pattern: ^modbus\.Client\.(Write|MaskWrite|UpdateRegisterMask|ReadWriteMultiple)
+          pkg: ^github\.com/otfabric/go-modbus$
+          msg: "read-only: Modbus write requests are not allowed (R11)"
+        - pattern: ^modbus\.Client\.(Diagnostic|BusMessageCount|ReadCoil|ReadDiscreteInput|ReadFile|ReadFIFO|ReadDeviceIdentification|ReadAllDeviceIdentification|ReadExceptionStatus|GetCommEvent|ReportServerID|SupportsFunction|SupportsDeviceIdentification|ProbeFunction)
+          pkg: ^github\.com/otfabric/go-modbus$
+          msg: "read-only: only FC03/FC04 register reads are allowed (R11)"
+        - pattern: ^modbus\.(NewServer|Server|ServerConfig)$
+          pkg: ^github\.com/otfabric/go-modbus$
+          msg: "the Explorer does not serve Modbus; servers are for tests only"
+        - pattern: ^sunspec\.(NewServer|Server|ServerModel|ServerOptions|ServerWrite)$
+          pkg: ^github\.com/otfabric/go-sunspec$
+          msg: "go-sunspec's Server is for tests only (R11)"
+  exclusions:
+    rules:
+      # Tests simulate devices and prove that the guard stops writes.
+      - path: _test\.go$
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt          # formatting
+    - goimports      # import grouping / formatting
+
+issues:
+  # Bump the default per-linter issue limit (default is 50)
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Whole-module analysis: see every issue, not only those in new code.
+  new: false
+
+run:
+  timeout: 5m
+  # Typecheck tests too (matches go test / IDE behavior for packages with _test.go).
+  tests: true

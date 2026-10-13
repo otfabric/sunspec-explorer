@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>SunSpec Explorer</string>
+	<key>CFBundleDisplayName</key>
+	<string>OT Fabric SunSpec Explorer</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.otfabric.sunspec-explorer</string>
+	<key>CFBundleExecutable</key>
+	<string>sunspec-explorer</string>
+	<key>CFBundleIconFile</key>
+	<string>appicon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 OT Fabric. MIT License.</string>
+	<!-- The Explorer talks Modbus to devices on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>SunSpec Explorer connects to SunSpec devices on your network to read their registers.</string>
+</dict>
+</plist>

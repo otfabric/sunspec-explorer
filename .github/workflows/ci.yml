@@ -1,0 +1,24 @@
+name: CI
+run-name: "CI (${{ github.event_name }}) on ${{ github.ref_name }} by @${{ github.actor }}"
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # The same checks and builds a release runs, with a version that cannot be
+  # mistaken for one. Nothing is published.
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      version: 0.0.0-ci

@@ -1,0 +1,60 @@
+@import '@fontsource/barlow-semi-condensed/500.css';
+@import '@fontsource/barlow-semi-condensed/600.css';
+@import '@fontsource/barlow-semi-condensed/700.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/400-italic.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+:root {
+  --ot-font-display: 'Barlow Semi Condensed', 'Arial Narrow', Arial, sans-serif;
+  --ot-font-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --ot-font-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  /* Dark (default), from the website */
+  --ot-bg: #11181f;
+  --ot-surface: #18222c;
+  --ot-line: #2a3743;
+  --ot-fg: #e6eaee;
+  --ot-fg-strong: #ffffff;
+  --ot-muted: #94a3b0;
+  --ot-accent: #3fc1c6;
+  --ot-accent-soft: #123a3d;
+  --ot-accent-strong: #dcefef;
+  --ot-wire: #e08a4e;
+  --ot-header-bg: #18222c;
+
+  /* Proposed additions (not on the website yet) */
+  --ot-blue: #8ab0e8;        /* third logo hue; info / third series */
+  --ot-danger: #f07178;      /* errors, read failures */
+  --ot-wire-text: #e08a4e;   /* copper usable for small text */
+  --ot-control-line: #94a3b0;/* borders of inputs/buttons (3:1 needed) */
+}
+
+:root[data-theme='light'] {
+  --ot-bg: #ffffff;
+  --ot-surface: #f4f6f8;
+  --ot-line: #d9dfe4;
+  --ot-fg: #2a3743;
+  --ot-fg-strong: #17212b;
+  --ot-muted: #5a6875;
+  --ot-accent: #0a7c80;
+  --ot-accent-soft: #dcefef;
+  --ot-accent-strong: #0b4f52;
+  --ot-wire: #b35a1f;
+  --ot-header-bg: #f4f6f8;
+
+  --ot-blue: #2f5d9e;
+  --ot-danger: #b42318;
+  --ot-wire-text: #9a4a15;   /* #b35a1f is only 4.41:1 on the grey surface */
+  --ot-control-line: #5a6875;
+}
+
+.ot-label { /* small uppercase mono label: column headers, mode badges */
+  font: 500 0.72rem/1 var(--ot-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ot-muted);
+}

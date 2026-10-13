@@ -1,0 +1,52 @@
+# systemd unit for the OT Fabric SunSpec Explorer daemon.
+#
+# Install:
+#   install -m 0755 sunspec-explorerd /usr/local/bin/
+#   useradd --system --no-create-home --shell /usr/sbin/nologin sunspec-explorer
+#   install -m 0644 sunspec-explorerd.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now sunspec-explorerd
+#
+# Get the URL (token included) as the service user:
+#   sudo -u sunspec-explorer sunspec-explorerd url --data-dir /var/lib/sunspec-explorer
+#
+# The private-temporary-directory option of systemd is deliberately absent:
+# with the default data directory (a folder in /tmp) systemd would delete the
+# recordings and the token every time the service stops. This unit goes one
+# step further and keeps them in /var/lib, which survives reboots too.
+
+[Unit]
+Description=OT Fabric SunSpec Explorer daemon (read-only)
+Documentation=https://github.com/otfabric/sunspec-explorer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sunspec-explorer
+Group=sunspec-explorer
+# Creates /var/lib/sunspec-explorer, owned by the service user, mode 0700.
+StateDirectory=sunspec-explorer
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/sunspec-explorerd --listen 127.0.0.1:8765 --data-dir /var/lib/sunspec-explorer
+Restart=on-failure
+RestartSec=5
+
+# Serial devices (M2: rtu:// targets) need the dialout group:
+# SupplementaryGroups=dialout
+
+# Hardening. The daemon needs the network and its state directory, nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+# Build output
+/bin/
+/release/
+
+# Frontend
+node_modules/
+
+# Coverage reports
+coverage.*
+
+# Logs
+*.log
+
+# Editor settings
+.vscode/
+
+# macOS
+.DS_Store

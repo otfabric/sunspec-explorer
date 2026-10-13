@@ -1,0 +1,16 @@
+# Codecov configuration for sunspec-explorer.
+# CI uploads the profile of the packages `make coverage-check` gates locally
+# with COVERAGE_MIN (the engine and what it is built from, not the Wails shell).
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 70%
+ignore:
+  - "cmd/**"
+  - "internal/gui/**"
+  - "frontend/**"

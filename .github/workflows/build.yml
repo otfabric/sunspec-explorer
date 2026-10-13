@@ -1,0 +1,305 @@
+# Checks the code and builds every deliverable. CI calls it on each push to
+# prove the release path; the release workflow calls it to make the release.
+#
+# Every job runs on a runner of the architecture it builds for. Nothing is
+# emulated (no QEMU): the two cross-builds, the armv7 daemon and the armv7
+# image, are plain Go cross-compilation on an arm64 runner.
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to build, without the leading "v" (for example 0.0.1)
+        required: true
+        type: string
+      publish-image:
+        description: Push the container image to ghcr.io (by digest; the release workflow tags it)
+        required: false
+        type: boolean
+        default: false
+
+# Go: every job uses the current stable release ("go-version: stable"), not
+# the version in go.mod. go.mod names the oldest Go the code builds with; the
+# release binaries should carry the newest standard library with its security
+# fixes, and tools installed with "@latest" (govulncheck) need a current Go.
+env:
+  GOWORK: "off"
+  VERSION: ${{ inputs.version }}
+  LDFLAGS: -s -w -X github.com/otfabric/sunspec-explorer/internal/buildinfo.Version=${{ inputs.version }}
+  IMAGE: ghcr.io/otfabric/sunspec-explorerd
+  GO_PKGS: >-
+    ./internal/engine/... ./internal/readonly/... ./internal/service/... ./internal/model/...
+    ./internal/buildinfo/... ./internal/api/... ./internal/web/... ./internal/daemon/...
+    ./cmd/sunspec-explorerd/... ./frontend/...
+
+jobs:
+  frontend:
+    name: Frontend (typecheck, test, both builds)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: make frontend-install
+      - run: make frontend-check
+      - run: make frontend
+      - name: Web bundle is free of the Wails runtime and within budget
+        run: |
+          if grep -rIil "wails" frontend/dist/web; then
+            echo "the web build contains Wails code"; exit 1
+          fi
+          size=$(find frontend/dist/web -type f -print0 | xargs -0 gzip -c | wc -c)
+          echo "web bundle: $size bytes gzipped"
+          test "$size" -le 1572864
+      - uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          include-hidden-files: true
+          retention-days: 7
+
+  checks:
+    name: Go (tests, coverage, lint, read-only ban, web UI smoke)
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      # With the dependencies installed, "go test ./internal/api" also runs
+      # the frontend's smoke suite against a daemon with a simulated device.
+      - run: make frontend-install
+      - run: go vet $GO_PKGS
+      - run: make coverage-check
+      - name: golangci-lint (includes the read-only ban, R11)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: ${{ env.GO_PKGS }}
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck $GO_PKGS
+
+  daemon:
+    name: Daemon linux/${{ matrix.name }}
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: amd64, runner: ubuntu-latest, goarch: amd64, goarm: "", native: true }
+          - { name: arm64, runner: ubuntu-24.04-arm, goarch: arm64, goarm: "", native: true }
+          # Cross-compiled on the arm64 runner; not executed here.
+          - { name: armv7, runner: ubuntu-24.04-arm, goarch: arm, goarm: "7", native: false }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Build (static, no cgo)
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          mkdir -p out
+          go build -trimpath -ldflags "$LDFLAGS" -o out/sunspec-explorerd ./cmd/sunspec-explorerd
+          file out/sunspec-explorerd | tee /dev/stderr | grep -q "statically linked"
+      - name: No Wails in the daemon (A12)
+        run: |
+          if go list -deps ./cmd/sunspec-explorerd | grep wailsapp; then exit 1; fi
+          if strings out/sunspec-explorerd | grep -i -m1 wails; then exit 1; fi
+      - name: Runs without a display on Debian 11, 12 and 13 (A12)
+        if: matrix.native
+        run: |
+          test "$(out/sunspec-explorerd version | cut -d' ' -f2)" = "$VERSION"
+          for release in bullseye bookworm trixie; do
+            docker run --rm -v "$PWD/out:/out:ro" debian:$release-slim /out/sunspec-explorerd version
+          done
+      - name: Package
+        run: |
+          name=sunspec-explorerd-$VERSION-linux-${{ matrix.name }}
+          mkdir "$name"
+          cp out/sunspec-explorerd packaging/sunspec-explorerd.service LICENSE docs/REMOTE-USE.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-daemon-linux-${{ matrix.name }}
+          path: sunspec-explorerd-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  gui:
+    name: Desktop ${{ matrix.os }}/${{ matrix.arch }}
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: darwin, arch: arm64, runner: macos-latest }
+          - { os: darwin, arch: amd64, runner: macos-15-intel }
+          - { os: windows, arch: amd64, runner: windows-latest }
+          # Best effort (R12): never blocks a build or a release.
+          - { os: windows, arch: arm64, runner: windows-11-arm, experimental: true }
+          - { os: linux, arch: amd64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental || false }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: GTK4 and WebKitGTK 6.0
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev pkg-config
+      - name: Build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+        run: |
+          flags="$LDFLAGS"
+          exe=sunspec-explorer
+          if [ "${{ matrix.os }}" = windows ]; then
+            flags="$flags -H windowsgui"   # no console window
+            exe=sunspec-explorer.exe
+          fi
+          mkdir -p out
+          go build -tags production -trimpath -ldflags "$flags" -o "out/$exe" ./cmd/sunspec-explorer
+          go vet ./cmd/sunspec-explorer ./internal/gui
+          "out/$exe" --version
+      - name: Package (macOS application bundle, ad-hoc signed)
+        if: matrix.os == 'darwin'
+        run: |
+          packaging/macos/bundle.sh out/sunspec-explorer "$VERSION" out
+          ditto -c -k --keepParent "out/SunSpec Explorer.app" "sunspec-explorer-$VERSION-darwin-${{ matrix.arch }}.zip"
+      - name: Package (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $name = "sunspec-explorer-$env:VERSION-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item out/sunspec-explorer.exe, LICENSE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+      - name: Package (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          name=sunspec-explorer-$VERSION-linux-${{ matrix.arch }}
+          mkdir "$name"
+          cp out/sunspec-explorer LICENSE "$name/"
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-gui-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            sunspec-explorer-*.zip
+            sunspec-explorer-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    name: Image linux/${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: amd64, runner: ubuntu-latest, platform: linux/amd64, native: true }
+          - { name: arm64, runner: ubuntu-24.04-arm, platform: linux/arm64, native: true }
+          # Built on the arm64 runner without emulation: the Dockerfile
+          # cross-compiles in its build stages and its last stage only copies.
+          - { name: armv7, runner: ubuntu-24.04-arm, platform: linux/arm/v7, native: false }
+    runs-on: ${{ matrix.runner }}
+    # Pushing needs "packages: write" from the calling workflow (the release).
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and load
+        if: matrix.native
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packaging/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: VERSION=${{ inputs.version }}
+          load: true
+          tags: sunspec-explorerd:ci
+          cache-from: type=gha,scope=image-${{ matrix.name }}
+          cache-to: type=gha,scope=image-${{ matrix.name }},mode=max
+      - name: Run it (A18)
+        if: matrix.native
+        run: |
+          docker run -d --name explorer -p 127.0.0.1:8765:8765 sunspec-explorerd:ci
+          sleep 3
+          docker logs explorer 2>&1 | sed 's/token=[A-Za-z0-9_-]*/token=<redacted>/'
+          test "$(docker inspect explorer --format '{{.Config.User}}')" = "nonroot:nonroot"
+          test "$(docker exec explorer sunspec-explorerd version | cut -d' ' -f2)" = "$VERSION"
+          url=$(docker exec explorer sunspec-explorerd url 2>/dev/null)
+          echo "::add-mask::${url#*#token=}"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/api/v1/health)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${url#*#token=}" http://127.0.0.1:8765/api/v1/health)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/)" = 200
+          docker stop -t 5 explorer
+          test "$(docker inspect explorer --format '{{.State.ExitCode}}')" = 0
+      - uses: docker/login-action@v4
+        if: inputs.publish-image
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Without publishing this only proves that the image builds; with it,
+      # the image is pushed untagged and the release workflow joins the
+      # three architectures under one tag.
+      - name: Build${{ inputs.publish-image && ' and push by digest' || '' }}
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packaging/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: VERSION=${{ inputs.version }}
+          provenance: false
+          outputs: ${{ inputs.publish-image && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+          cache-from: type=gha,scope=image-${{ matrix.name }}
+          cache-to: type=gha,scope=image-${{ matrix.name }},mode=max
+      - name: Record the digest
+        if: inputs.publish-image
+        run: |
+          mkdir digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: inputs.publish-image
+        with:
+          name: image-digest-${{ matrix.name }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1

@@ -1,0 +1,4 @@
+node_modules
+# Build output; the .gitkeep placeholders let the Go code embed dist/ in a fresh checkout.
+dist/*/*
+!dist/*/.gitkeep
