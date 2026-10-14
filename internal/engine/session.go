@@ -62,7 +62,12 @@ func (e *Engine) open(ctx context.Context, t *target) (*session, error) {
 	case schemeRTU:
 		conf.Speed, conf.DataBits, conf.Parity, conf.StopBits = t.baud, t.dataBits, t.parity, t.stopBits
 	case schemeTLS:
-		conf.TLSClientCert, conf.TLSRootCAs = &e.opts.TLS.Certificate, e.opts.TLS.RootCAs
+		identity := e.tlsConfig()
+		if identity == nil {
+			// Removed between the check and now.
+			return nil, service.Errorf(service.CodeNotAllowed, "the TLS identity was removed")
+		}
+		conf.TLSClientCert, conf.TLSRootCAs = &identity.Certificate, identity.RootCAs
 	}
 	client, err := modbus.New(conf)
 	if err != nil {

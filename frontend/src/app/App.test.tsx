@@ -2,7 +2,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import type { Platform, Theme } from './platform/platform';
+import type { Platform, Theme, TLSSettings, TlsFileKind, TlsIdentity } from './platform/platform';
 import { MockService } from './service/mock';
 import type { LinkStatus } from './service/service';
 import type { ExplorerEvent, Health } from './service/types';
@@ -334,6 +334,178 @@ describe('target kinds', () => {
     await typeUrl(user, 'tcp://10.0.0.5:502');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
+  });
+});
+
+describe('poll scope', () => {
+  it('polls a static-only model too once its box is ticked', async () => {
+    const user = userEvent.setup();
+    const service = new MockService();
+    const start = vi.spyOn(service, 'startPolling');
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    const common = await screen.findByRole('checkbox', { name: /Include model 1 at position 0/ });
+    expect(common).not.toBeChecked();
+    expect(screen.getByText('static')).toHaveAttribute('title', expect.stringContaining('Tick the box to poll it anyway'));
+    await user.click(common);
+    await user.click(screen.getByRole('button', { name: 'Start polling' }));
+
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
+    expect(start.mock.calls[0]?.[1]).toEqual({ interval_s: 5, model_indexes: [0, 1, 2, 3] });
+    await user.click(await screen.findByRole('button', { name: 'Stop polling' }));
+  });
+});
+
+describe('serial port picker', () => {
+  it.each([
+    ['COM3', 'rtu://COM3'],
+    ['/dev/ttyUSB0', 'rtu:///dev/ttyUSB0'],
+  ])('turns the port %s into the URL %s', async (path, url) => {
+    const user = userEvent.setup();
+    const service = new MockService();
+    vi.spyOn(service, 'serialPorts').mockResolvedValue([{ path: 'COM9' }, { path }]);
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    await screen.findByText(/^engine /);
+
+    const field = screen.getByLabelText('Device URL');
+    await user.clear(field);
+    await user.type(field, 'rtu://');
+    await user.selectOptions(await screen.findByLabelText('Serial port'), path);
+    expect(field).toHaveValue(url);
+  });
+});
+
+/** A TLS identity like the desktop application's: files are "chosen" by name, the engine gains 'tls' when it is active. */
+class FakeTls implements TlsIdentity {
+  current: TLSSettings = { cert_file: '', key_file: '', ca_file: '', active: false, error: '', from_flags: false };
+  /** What the next native dialog "returns"; '' is a cancelled dialog. */
+  nextFile = '';
+  mismatch = false;
+
+  settings = vi.fn(async () => this.current);
+
+  choose = vi.fn(async (kind: TlsFileKind) => {
+    if (this.nextFile !== '') {
+      this.current = { ...this.current, [`${kind}_file`]: this.nextFile };
+    }
+    return this.evaluate();
+  });
+
+  clear = vi.fn(async () => {
+    this.current = { ...this.current, cert_file: '', key_file: '', ca_file: '' };
+    return this.evaluate();
+  });
+
+  private evaluate(): TLSSettings {
+    const complete = this.current.cert_file !== '' && this.current.key_file !== '' && this.current.ca_file !== '';
+    this.current = { ...this.current, active: complete && !this.mismatch, error: complete && this.mismatch ? 'the key does not match the certificate' : '' };
+    return this.current;
+  }
+}
+
+/** An engine whose 'tls' feature follows the fake identity, as the desktop engine's does. */
+class TlsEngine extends MockService {
+  healthChecks = 0;
+
+  constructor(private readonly identity: FakeTls) {
+    super();
+  }
+
+  override async health(): Promise<Health> {
+    this.healthChecks++;
+    return { ...(await super.health()), features: this.identity.current.active ? ['recording', 'tls'] : ['recording'] };
+  }
+}
+
+describe('TLS identity', () => {
+  async function openWithTlsUrl(tls: FakeTls | undefined) {
+    const user = userEvent.setup();
+    const service = new TlsEngine(tls ?? new FakeTls());
+    const open = vi.spyOn(service, 'openSession');
+    render(<App service={service} platform={{ ...fakePlatform('dark'), mode: { kind: tls ? 'local' : 'browser' }, tls }} />);
+    await screen.findByText(/^engine /);
+    const field = screen.getByLabelText('Device URL');
+    await user.clear(field);
+    await user.type(field, 'tcp+tls://10.0.0.5:802');
+    return { user, service, open };
+  }
+
+  it('is chosen file by file until the engine can open TLS targets', async () => {
+    const tls = new FakeTls();
+    const { user, service, open } = await openWithTlsUrl(tls);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('TLS targets need a TLS identity');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('--tls-cert');
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Choose TLS identity…' }));
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'TLS identity' }));
+    expect(await dialog.findByText('Choose all three files')).toBeInTheDocument();
+    expect(dialog.getByText(/Private key files stay on this computer/)).toBeInTheDocument();
+    expect(dialog.getAllByText('not chosen')).toHaveLength(3);
+    expect(dialog.getByRole('button', { name: 'Clear' })).toBeDisabled();
+
+    tls.nextFile = '';
+    await user.click(dialog.getByRole('button', { name: 'Choose Certificate (PEM)' }));
+    expect(dialog.getAllByText('not chosen')).toHaveLength(3);
+
+    tls.nextFile = '/home/me/pki/client.crt';
+    await user.click(dialog.getByRole('button', { name: 'Choose Certificate (PEM)' }));
+    expect(await dialog.findByText('client.crt')).toBeInTheDocument();
+    expect(dialog.getByText('/home/me/pki/client.crt')).toBeInTheDocument();
+    tls.nextFile = 'C:\\pki\\client.key';
+    await user.click(dialog.getByRole('button', { name: 'Choose Private key (PEM)' }));
+    expect(await dialog.findByText('client.key')).toBeInTheDocument();
+    expect(dialog.getByText('Choose all three files')).toBeInTheDocument();
+    tls.nextFile = '/home/me/pki/ca.pem';
+    const before = service.healthChecks;
+    await user.click(dialog.getByRole('button', { name: 'Choose CA or device certificate (PEM)' }));
+
+    expect(await dialog.findByText('Active: TLS targets can be opened')).toBeInTheDocument();
+    await vi.waitFor(() => expect(service.healthChecks).toBeGreaterThan(before));
+    await user.click(dialog.getByRole('button', { name: 'Close' }));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ url: 'tcp+tls://10.0.0.5:802' }));
+  });
+
+  it('shows why an identity is not active, and can be cleared', async () => {
+    const tls = new FakeTls();
+    tls.mismatch = true;
+    tls.current = { ...tls.current, cert_file: '/pki/a.crt', key_file: '/pki/b.key', ca_file: '/pki/ca.pem', error: 'the key does not match the certificate' };
+    const { user } = await openWithTlsUrl(tls);
+
+    await user.click(screen.getByRole('button', { name: 'TLS identity…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'TLS identity' }));
+    expect(await dialog.findByText('the key does not match the certificate')).toBeInTheDocument();
+
+    await user.click(dialog.getByRole('button', { name: 'Clear' }));
+    expect(await dialog.findByText('Choose all three files')).toBeInTheDocument();
+    expect(dialog.getAllByText('not chosen')).toHaveLength(3);
+    expect(tls.clear).toHaveBeenCalledOnce();
+  });
+
+  it('is read-only when it came from the command line', async () => {
+    const tls = new FakeTls();
+    tls.current = { cert_file: '/etc/pki/a.crt', key_file: '/etc/pki/a.key', ca_file: '/etc/pki/ca.pem', active: true, error: '', from_flags: true };
+    const { user } = await openWithTlsUrl(tls);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'TLS identity…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'TLS identity' }));
+    expect(await dialog.findByText(/given on the command line .* cannot be changed here/)).toBeInTheDocument();
+    expect(dialog.getByText('Active: TLS targets can be opened')).toBeInTheDocument();
+    for (const name of ['Choose Certificate (PEM)', 'Choose Private key (PEM)', 'Choose CA or device certificate (PEM)', 'Clear']) {
+      expect(dialog.getByRole('button', { name })).toBeDisabled();
+    }
+  });
+
+  it('is not offered in the browser: the daemon gets its identity from flags', async () => {
+    await openWithTlsUrl(undefined);
+    expect(screen.getByRole('alert')).toHaveTextContent('--tls-cert, --tls-key and --tls-ca');
+    expect(screen.queryByRole('button', { name: /TLS identity/ })).not.toBeInTheDocument();
   });
 });
 

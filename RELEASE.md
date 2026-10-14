@@ -1,5 +1,40 @@
 # sunspec-explorer Releases
 
+## v0.0.3
+
+**Date:** 2026-10-14
+**Previous release:** v0.0.2
+
+## Summary
+
+TLS without the command line in the desktop application, COM ports on Windows, JSON Schemas for everything the Explorer reads and writes, and the device file shared with sunspecctl through go-sunspec.
+
+## Changes
+
+### Added
+
+- **TLS identity in the desktop application**: Advanced → "TLS identity…" chooses the certificate, its private key and the CA (or device) certificate with the system's file dialog. The choice is checked at once (for example, a key that does not belong to the certificate is reported), applied to the running application, and remembered between runs; only the file paths are stored, in the user's settings. An identity given with `--tls-cert`, `--tls-key` and `--tls-ca` still takes precedence and is shown read-only. The daemon keeps its flags.
+- **COM ports on Windows**: the desktop application lists the serial ports of the computer, as on macOS and Linux.
+- **JSON Schemas for every entity** (`docs/schema/`, see its README): `recording-1.schema.json` for a line of a recording, and `api-1.schema.json` with every entity of the HTTP API (sessions, samples, events, recordings, errors, …) as named definitions, next to the existing `snapshot-1.schema.json`. Tests validate real recordings, every API answer (also the error answers) and the event stream against them. The device file's schema is published with its code in go-sunspec.
+- A tooltip on a model marked "static" explains that it is read once and can be ticked to be polled anyway.
+
+### Changed
+
+- **The device-file export uses go-sunspec's `devicefile` package** (go-sunspec v0.6.0), the code `sunspecctl capture` and `sunspecctl serve` use, so the two cannot drift apart. A model is now written by its point values when they decode back to the same points (sunspecctl's rule); v0.0.2 required identical registers. Files can therefore differ from v0.0.2 for models with, for example, space-padded strings; serving them still gives a device with the same values.
+- **Install instructions** in the README fetch the latest release and verify its checksum, instead of naming a version.
+- The `$defs` of `snapshot-1.schema.json` are renamed to the entity names (`ModelResult`, `GroupView`, `PointView`, `Address`, …); the documents it accepts are unchanged.
+
+### Built with
+
+go-sunspec v0.6.0, go-modbus v1.5.0, Wails v3.0.0-beta.29.
+
+### Not in this release
+
+- Code signing, installers and packages.
+- Serial targets were tested for their rules and settings, and RTU framing over TCP; they were not run against a physical serial port.
+
+---
+
 ## v0.0.2
 
 **Date:** 2026-10-14

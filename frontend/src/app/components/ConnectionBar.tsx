@@ -16,6 +16,8 @@ interface ConnectionBarProps {
   engineIsRemote: boolean;
   onConnect: (cfg: TargetConfig) => void;
   onDisconnect: () => void;
+  /** Opens the TLS identity dialog; absent where the engine's identity is not this user's to set. */
+  onTlsIdentity?: () => void;
 }
 
 const URL_FORMS = 'tcp://host:port · rtuovertcp://host:port · tcp+tls://host:port · rtu://<device> (rtu:///dev/ttyUSB0, rtu://COM3)';
@@ -30,21 +32,24 @@ export function parseBaseAddresses(text: string): number[] | null {
 
 const SELECT = 'h-8 rounded border border-control bg-bg px-2 font-mono text-[13px] text-fg-strong disabled:opacity-60';
 
-/** Why the engine cannot open this kind of target, or null when it can (or that is not known). */
-export function unsupportedReason(url: string, features: Feature[] | null): string | null {
+/** The feature this kind of target needs and the engine lacks; null when it can open it (or that is not known). */
+function missingFeature(url: string, features: Feature[] | null): 'serial' | 'tls' | null {
   if (features === null) {
     return null;
   }
   if (url.startsWith('rtu://') && !features.includes('serial')) {
-    return 'Serial targets are off: the daemon was not started with --allow-serial.';
+    return 'serial';
   }
   if (url.startsWith('tcp+tls://') && !features.includes('tls')) {
-    return 'TLS targets need the engine to be started with --tls-cert, --tls-key and --tls-ca.';
+    return 'tls';
   }
   return null;
 }
 
-export function ConnectionBar({ connected, connecting, offline, features, serialPorts, engineIsRemote, onConnect, onDisconnect }: ConnectionBarProps) {
+/** `rtu://` plus the device: `rtu:///dev/ttyUSB0` for a unix path, `rtu://COM3` for a Windows port. */
+export const serialUrl = (path: string) => `rtu://${path}`;
+
+export function ConnectionBar({ connected, connecting, offline, features, serialPorts, engineIsRemote, onConnect, onDisconnect, onTlsIdentity }: ConnectionBarProps) {
   const [url, setUrl] = useState('tcp://127.0.0.1:502');
   const [unitId, setUnitId] = useState('1');
   const [timeoutMs, setTimeoutMs] = useState('2000');
@@ -60,13 +65,13 @@ export function ConnectionBar({ connected, connecting, offline, features, serial
   const locked = connected || connecting || offline;
   const target = url.trim();
   const serial = target.startsWith('rtu://');
-  const unsupported = unsupportedReason(target, features);
+  const missing = missingFeature(target, features);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (connected) {
       onDisconnect();
-    } else if (baseAddresses !== null && unsupported === null) {
+    } else if (baseAddresses !== null && missing === null) {
       onConnect({
         url: target,
         unit_id: Number(unitId),
@@ -88,8 +93,8 @@ export function ConnectionBar({ connected, connecting, offline, features, serial
         <>
           {serialPorts.length > 0 && (
             <Field label="Serial port">
-              <select className={SELECT} value={target.slice('rtu://'.length)} onChange={(e) => setUrl(`rtu://${e.target.value}`)} disabled={locked}>
-                {!serialPorts.some((port) => `rtu://${port.path}` === target) && <option value={target.slice('rtu://'.length)}>choose…</option>}
+              <select className={SELECT} value={target.slice('rtu://'.length)} onChange={(e) => setUrl(serialUrl(e.target.value))} disabled={locked}>
+                {!serialPorts.some((port) => serialUrl(port.path) === target) && <option value={target.slice('rtu://'.length)}>choose…</option>}
                 {serialPorts.map((port) => (
                   <option key={port.path} value={port.path}>
                     {port.path}
@@ -145,6 +150,11 @@ export function ConnectionBar({ connected, connecting, offline, features, serial
           <Field label="Max models">
             <TextInput className="w-24" type="number" min={1} value={maxModels} onChange={(e) => setMaxModels(e.target.value)} disabled={locked} placeholder="default" />
           </Field>
+          {onTlsIdentity && (
+            <Button onClick={onTlsIdentity} disabled={locked}>
+              TLS identity…
+            </Button>
+          )}
           {baseAddresses === null && (
             <p className="pb-2 text-[13px] text-danger" role="alert">
               Base addresses: a comma-separated list of register addresses (0 to 65535).
@@ -157,16 +167,25 @@ export function ConnectionBar({ connected, connecting, offline, features, serial
           Disconnect
         </Button>
       ) : (
-        <Button type="submit" variant="primary" icon={<ConnectIcon />} disabled={connecting || offline || baseAddresses === null || unsupported !== null}>
+        <Button type="submit" variant="primary" icon={<ConnectIcon />} disabled={connecting || offline || baseAddresses === null || missing !== null}>
           {connecting ? 'Connecting…' : 'Connect'}
         </Button>
       )}
       {!connected && (
         <div className="basis-full text-[12px] text-muted">
-          {unsupported !== null && (
+          {missing !== null && (
             <p className="mb-1 flex items-center gap-1.5 text-[13px] text-wire" role="alert">
               <WarningIcon size={16} />
-              {unsupported}
+              {missing === 'serial' && 'Serial targets are off: the daemon was not started with --allow-serial.'}
+              {missing === 'tls' && !onTlsIdentity && 'TLS targets need the engine to be started with --tls-cert, --tls-key and --tls-ca.'}
+              {missing === 'tls' && onTlsIdentity && (
+                <>
+                  TLS targets need a TLS identity: a certificate, its key and a CA certificate.
+                  <Button onClick={onTlsIdentity} disabled={locked}>
+                    Choose TLS identity…
+                  </Button>
+                </>
+              )}
             </p>
           )}
           {serial && (

@@ -6,21 +6,36 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "app", "libs", "session_id", "captured_at", "read_duration_ms",
-    "metadata", "target", "device", "models", "warnings"
+    "schema", "app", "libs", "session_id", "captured_at", "read_duration_ms", "metadata",
+    "target", "device", "models", "warnings"
   ],
   "properties": {
     "schema": { "const": "otfabric.sunspec-explorer.snapshot/1" },
-    "app": {
+    "app": { "$ref": "#/$defs/AppInfo" },
+    "libs": { "$ref": "#/$defs/LibInfo" },
+    "session_id": { "type": "string" },
+    "captured_at": { "type": "string", "format": "date-time", "description": "Start of the first request. Models are read one after another: a snapshot is not an atomic view of the device." },
+    "read_duration_ms": { "type": "integer", "minimum": 0 },
+    "metadata": { "enum": ["full", "compact"], "description": "full: points carry label, description, access, mandatory and static. compact: they do not." },
+    "target": { "$ref": "#/$defs/Target" },
+    "device": { "description": "Identification from the Common model, or null when the device has none or it could not be read.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/DeviceIdentity" }] },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/ModelResult" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "Address": { "description": "A zero-based Modbus register address.", "type": "integer", "minimum": 0, "maximum": 65535 },
+    "AppInfo": {
+      "description": "The application that wrote the file.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "version"],
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "description": "sunspec-explorer." },
         "version": { "type": "string" }
       }
     },
-    "libs": {
+    "LibInfo": {
+      "description": "The libraries that decoded the data.",
       "type": "object",
       "additionalProperties": false,
       "required": ["go_sunspec", "registry_models"],
@@ -29,101 +44,85 @@
         "registry_models": { "type": "integer", "minimum": 0, "description": "Number of SunSpec model schemas the library knows." }
       }
     },
-    "session_id": { "type": "string" },
-    "captured_at": { "type": "string", "format": "date-time", "description": "Start of the first request. Models are read one after another: a snapshot is not an atomic view of the device." },
-    "read_duration_ms": { "type": "integer", "minimum": 0 },
-    "metadata": { "enum": ["full", "compact"], "description": "full: points carry label, description, access, mandatory and static. compact: they do not." },
-    "target": {
+    "Target": {
+      "description": "The device of a session.",
       "type": "object",
       "additionalProperties": false,
       "required": ["url", "unit_id", "reg_type", "base_address"],
       "properties": {
         "url": { "type": "string", "description": "tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<device>; never with credentials." },
-        "unit_id": { "type": "integer", "minimum": 1, "maximum": 255 },
+        "unit_id": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Modbus unit ID: 1..247, or 255." },
         "reg_type": { "enum": ["holding", "input"] },
-        "base_address": { "$ref": "#/$defs/address", "description": "Address of the SunS marker." }
+        "base_address": { "$ref": "#/$defs/Address", "description": "Address of the SunS marker." }
       }
     },
-    "device": {
-      "description": "Identification from the Common model, or null when the device has none or it could not be read.",
-      "oneOf": [
-        { "type": "null" },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["manufacturer", "model", "version", "serial"],
-          "properties": {
-            "manufacturer": { "type": "string" },
-            "model": { "type": "string" },
-            "options": { "type": "string" },
-            "version": { "type": "string" },
-            "serial": { "type": "string" }
-          }
-        }
-      ]
+    "DeviceIdentity": {
+      "description": "Identification points of the Common model (model 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manufacturer", "model", "version", "serial"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "options": { "type": "string", "description": "Omitted when empty." },
+        "version": { "type": "string" },
+        "serial": { "type": "string" }
+      }
     },
-    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
-    "warnings": { "type": "array", "items": { "type": "string" } }
-  },
-  "$defs": {
-    "address": { "type": "integer", "minimum": 0, "maximum": 65535 },
-    "model": {
+    "ModelResult": {
+      "description": "The outcome of reading one model instance.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "index", "id", "name", "start_address", "length", "schema_known", "status",
-        "error", "read_duration_ms", "warnings", "stale", "group", "raw_registers"
+        "index", "id", "name", "start_address", "length", "schema_known", "status", "error",
+        "read_duration_ms", "warnings", "stale", "group", "raw_registers"
       ],
       "properties": {
         "index": { "type": "integer", "minimum": 0, "description": "Position in the model chain. A device can hold several models with the same id." },
         "id": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "SunSpec model ID." },
         "name": { "type": "string" },
-        "start_address": { "$ref": "#/$defs/address", "description": "Address of the model's ID register." },
+        "start_address": { "$ref": "#/$defs/Address", "description": "Address of the model's ID register." },
         "length": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Number of data registers after the ID and length registers." },
         "schema_known": { "type": "boolean" },
         "status": { "enum": ["ok", "error", "changed"], "description": "changed: the device no longer holds this model at this address." },
-        "error": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"], "description": "Why the read failed; null when status is ok." },
         "read_duration_ms": { "type": "integer", "minimum": 0 },
         "warnings": { "type": "array", "items": { "type": "string" } },
-        "stale": { "type": "boolean" },
-        "last_ok_at": { "type": "string", "format": "date-time" },
-        "group": {
-          "description": "The decoded model, or null when it was not decoded (no schema, or the read failed).",
-          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/group" }]
-        },
+        "stale": { "type": "boolean", "description": "While polling: the last good read of the model is older than two poll intervals." },
+        "last_ok_at": { "type": "string", "format": "date-time", "description": "Time of the last good read of the model in this session; omitted when there was none." },
+        "group": { "description": "The decoded model, or null when it was not decoded (no schema, or the read failed).", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/GroupView" }] },
         "raw_registers": {
           "description": "Data registers of a model without schema, or of every model when the request asked for them; otherwise null.",
-          "oneOf": [
-            { "type": "null" },
-            { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }
-          ]
+          "oneOf": [{ "type": "null" }, { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }]
         }
       }
     },
-    "group": {
+    "GroupView": {
+      "description": "One decoded group instance: its points and the group instances nested in it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "index", "points", "groups"],
       "properties": {
         "name": { "type": "string" },
-        "label": { "type": "string" },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
         "index": { "type": "integer", "minimum": 0, "description": "1-based instance number within the parent; 0 for the top-level group." },
-        "points": { "type": "array", "items": { "$ref": "#/$defs/point" } },
-        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } }
+        "points": { "type": "array", "items": { "$ref": "#/$defs/PointView" } },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/GroupView" } }
       }
     },
-    "point": {
+    "PointView": {
+      "description": "One decoded point.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "type", "implemented", "raw", "scaled", "address", "offset", "size"],
       "properties": {
         "name": { "type": "string" },
         "type": { "type": "string", "description": "SunSpec point type, for example int16, acc32, enum16, sunssf, string." },
-        "label": { "type": "string" },
-        "description": { "type": "string" },
-        "access": { "enum": ["R", "RW"] },
-        "mandatory": { "type": "boolean" },
-        "static": { "type": "boolean" },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
+        "description": { "type": "string", "description": "Metadata: present at level full." },
+        "access": { "enum": ["R", "RW"], "description": "Metadata: present at level full." },
+        "mandatory": { "type": "boolean", "description": "Metadata: present at level full." },
+        "static": { "type": "boolean", "description": "Metadata: present at level full." },
         "units": { "type": "string" },
         "implemented": { "type": "boolean", "description": "false: the device reports the SunSpec not-implemented value; raw then holds that sentinel, not a measurement." },
         "raw": {
@@ -136,10 +135,10 @@
           ]
         },
         "scaled": { "type": ["number", "null"], "description": "raw times 10^sf_raw, or null without a resolved scale factor." },
-        "sf_name": { "type": "string" },
-        "sf_raw": { "type": "integer", "minimum": -32768, "maximum": 32767 },
+        "sf_name": { "type": "string", "description": "Name of the scale factor point." },
+        "sf_raw": { "type": "integer", "minimum": -32768, "maximum": 32767, "description": "Value of the scale factor point." },
         "symbols": { "type": "array", "items": { "type": "string" }, "description": "Names of the active enum value or bitfield flags." },
-        "address": { "$ref": "#/$defs/address", "description": "Absolute address of the point's first register." },
+        "address": { "$ref": "#/$defs/Address", "description": "Absolute address of the point's first register." },
         "offset": { "type": "integer", "minimum": 0, "description": "Register offset from the model's ID register." },
         "size": { "type": "integer", "minimum": 1, "description": "Number of registers." }
       }

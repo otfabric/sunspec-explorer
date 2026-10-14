@@ -23,6 +23,7 @@ import (
 	"github.com/otfabric/sunspec-explorer/internal/daemon"
 	"github.com/otfabric/sunspec-explorer/internal/engine"
 	"github.com/otfabric/sunspec-explorer/internal/gui"
+	"github.com/otfabric/sunspec-explorer/internal/settings"
 )
 
 const appTitle = "SunSpec Explorer"
@@ -48,7 +49,7 @@ func run(args []string) error {
 	debug := flags.Bool("debug", false, "log at debug level")
 	dataDir := flags.String("data-dir", daemon.DefaultDataDir(),
 		"directory for recordings; the default is temporary storage")
-	tlsCert := flags.String("tls-cert", "", "certificate (PEM) presented to tcp+tls:// devices")
+	tlsCert := flags.String("tls-cert", "", "certificate (PEM) presented to tcp+tls:// devices (or choose the files in the application)")
 	tlsKey := flags.String("tls-key", "", "private key (PEM) of --tls-cert")
 	tlsCA := flags.String("tls-ca", "", "CA or device certificates (PEM) a tcp+tls:// device must present")
 	if err := flags.Parse(args); err != nil {
@@ -70,18 +71,19 @@ func run(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	// Without a usable data directory the application still explores; it
-	// only cannot record.
 	// The desktop application runs as its user and may open any serial
 	// device that user may.
 	opts := engine.Options{Logger: log, SerialPorts: daemon.LocalSerialPorts}
-	if *tlsCert != "" || *tlsKey != "" || *tlsCA != "" {
+	fromFlags := *tlsCert != "" || *tlsKey != "" || *tlsCA != ""
+	if fromFlags {
 		tlsConfig, err := engine.LoadTLS(*tlsCert, *tlsKey, *tlsCA)
 		if err != nil {
 			return err
 		}
 		opts.TLS = tlsConfig
 	}
+	// Without a usable data directory the application still explores; it
+	// only cannot record.
 	if err := daemon.EnsureDataDir(*dataDir); err != nil {
 		log.Warn("recording is not available", "error", err)
 	} else {
@@ -90,13 +92,22 @@ func run(args []string) error {
 	eng := engine.New(opts)
 	defer eng.Close()
 
+	// The TLS identity for tcp+tls:// targets: from the command line, or the
+	// files the user chose in the application, remembered between runs.
+	var identity *settings.TLS
+	if fromFlags {
+		identity = settings.NewTLSFromFlags(*tlsCert, *tlsKey, *tlsCA)
+	} else {
+		identity = settings.NewTLS(settings.DefaultPath(), eng.SetTLS)
+	}
+
 	app := application.New(application.Options{
 		Name:        appTitle,
 		Description: "Read-only explorer for SunSpec devices",
 		Icon:        appIcon,
 		Logger:      log,
 		Services: []application.Service{
-			application.NewServiceWithOptions(gui.New(eng),
+			application.NewServiceWithOptions(gui.New(eng, identity),
 				application.ServiceOptions{MarshalError: gui.MarshalError}),
 		},
 		Assets: application.AssetOptions{

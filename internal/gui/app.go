@@ -23,6 +23,7 @@ import (
 
 	"github.com/otfabric/sunspec-explorer/internal/model"
 	"github.com/otfabric/sunspec-explorer/internal/service"
+	"github.com/otfabric/sunspec-explorer/internal/settings"
 )
 
 // EventName is the name of the Wails event that carries a model.Event.
@@ -32,15 +33,61 @@ const EventName = "explorer:event"
 // frontend's whole view of the backend.
 type App struct {
 	svc service.Service
+	tls *settings.TLS
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
 }
 
-// New creates the Wails service for svc.
-func New(svc service.Service) *App {
-	return &App{svc: svc}
+// New creates the Wails service for svc. tls manages the identity for
+// tcp+tls:// targets.
+func New(svc service.Service, tls *settings.TLS) *App {
+	return &App{svc: svc, tls: tls}
+}
+
+// TLSSettings returns the TLS identity as the user set it up.
+func (a *App) TLSSettings() settings.TLSSettings { return a.tls.Settings() }
+
+// ChooseTLSFile lets the user pick the file of one kind ("cert", "key" or
+// "ca") with the native dialog and tries the identity. Cancelling changes
+// nothing. The frontend names the kind; the path comes from the dialog.
+func (a *App) ChooseTLSFile(kind string) (settings.TLSSettings, error) {
+	app := application.Get()
+	if app == nil {
+		return a.tls.Settings(), service.Errorf(service.CodeInternal, "no application")
+	}
+	titles := map[string]string{
+		settings.TLSCert: "Certificate this application presents (PEM)",
+		settings.TLSKey:  "Private key of the certificate (PEM)",
+		settings.TLSCA:   "CA or device certificate to accept (PEM)",
+	}
+	title, ok := titles[kind]
+	if !ok {
+		return a.tls.Settings(), service.Errorf(service.CodeInvalidArgument, "unknown kind of TLS file %q", kind)
+	}
+	path, err := app.Dialog.OpenFile().SetTitle(title).CanChooseFiles(true).
+		AddFilter("PEM files", "*.pem;*.crt;*.cer;*.key").AddFilter("All files", "*.*").PromptForSingleSelection()
+	if err != nil {
+		return a.tls.Settings(), service.Wrap(service.CodeInternal, err, "open dialog")
+	}
+	if path == "" {
+		return a.tls.Settings(), nil
+	}
+	st, err := a.tls.Set(kind, path)
+	if err != nil {
+		return st, service.Wrap(service.CodeInvalidArgument, err, "TLS identity")
+	}
+	return st, nil
+}
+
+// ClearTLS forgets the TLS identity.
+func (a *App) ClearTLS() (settings.TLSSettings, error) {
+	st, err := a.tls.Clear()
+	if err != nil {
+		return st, service.Wrap(service.CodeInvalidArgument, err, "TLS identity")
+	}
+	return st, nil
 }
 
 // MarshalError encodes the error of a bound method for the frontend as

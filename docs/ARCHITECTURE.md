@@ -133,15 +133,15 @@ Rules: `metadata` (label, description, access, mandatory, static) is included fo
 Recording (`.jsonl`, one JSON object per line):
 
 ```
-{"type":"header","schema":"otfabric.sunspec-explorer.recording/1","started_at":"...","interval_s":5,"target":{...},"app":{...},"libs":{...},"models":[{"index":0,"id":1},...]}
-{"type":"sample","seq":1,"captured_at":"...","read_duration_ms":412,"overruns":0,"models":[{"index":1,"status":"ok","points":[...compact...]}]}
-{"type":"event","seq":2,"at":"...","kind":"discovery_changed|reconnect|gap","detail":"..."}
-{"type":"footer","stopped_at":"...","samples":720,"failures":3,"reason":"user|limit|shutdown"}
+{"type":"header","schema":"otfabric.sunspec-explorer.recording/1","name":"...","started_at":"...","interval_s":5,"app":{...},"libs":{...},"target":{...},"device":{...},"models":[{"index":0,"id":1,...},...]}
+{"type":"sample","session_id":"...","seq":1,"captured_at":"...","read_duration_ms":412,"overruns":0,"metadata":"compact","models":[{"index":1,"id":103,"status":"ok","group":{...compact points...},...}]}
+{"type":"event","at":"...","kind":"gap|polling_started|reconnecting|connected|discovery_changed","detail":"..."}
+{"type":"footer","stopped_at":"...","samples":720,"failures":3,"reason":"user|limit|disk_space|session_closed|shutdown|error"}
 ```
 
 As implemented (`internal/engine/recording.go`, types in `internal/model`): the header also carries `name`, `device` and the full model list; a sample line is the poll sample as it is (`session_id`, `metadata: "compact"`, per-model status, stale flag and points); event kinds are `gap` (polling not running or stopped), `polling_started`, `reconnecting`, `connected` and `discovery_changed` (with the new `models`); the footer `reason` is `user`, `limit` (size, total size or age), `disk_space` (the free-space floor), `session_closed`, `shutdown` or `error`. Files live in `<data-dir>/recordings`, mode 0600.
 
-Every line is one `write` call, unbuffered. A truncated last line (crash) is tolerated by readers. Rotation by size creates `<name>.000.jsonl`, `.001.jsonl`. A `<name>.meta.json` sidecar (state, counters, config; written atomically at start, every 30 samples and at stop) records `running|stopped|interrupted`. At start the engine marks every recording that still says `running` as `interrupted` and counts its samples again from the files. While a recording runs, each `sample` event carries its counters, so the user interface needs no timer. CSV (long) export columns: `captured_at, seq, model_index, model_id, group_path, point, value, scaled, unit, implemented, status` (`group_path` such as `module[2]` or `Crv[1]/Pt[3]`; `seq` empty for a single read; a model without schema gives one row per data register, a failed model one row with its status). Device-file export matches the `sunspecctl capture` format (`internal/engine/export.go`, a port of sunspecctl's `devicefile.go`; a model is written by point values only when they encode back to exactly the registers that were read, otherwise by its registers; moving that code into go-sunspec would let both import it). The snapshot's JSON Schema is `docs/schema/snapshot-1.schema.json`.
+Every line is one `write` call, unbuffered. A truncated last line (crash) is tolerated by readers. Rotation by size creates `<name>.000.jsonl`, `.001.jsonl`. A `<name>.meta.json` sidecar (state, counters, config; written atomically at start, every 30 samples and at stop) records `running|stopped|interrupted`. At start the engine marks every recording that still says `running` as `interrupted` and counts its samples again from the files. While a recording runs, each `sample` event carries its counters, so the user interface needs no timer. CSV (long) export columns: `captured_at, seq, model_index, model_id, group_path, point, value, scaled, unit, implemented, status` (`group_path` such as `module[2]` or `Crv[1]/Pt[3]`; `seq` empty for a single read; a model without schema gives one row per data register, a failed model one row with its status). Device-file export uses go-sunspec's `devicefile` package (v0.6.0), the same code `sunspecctl capture` and `serve` use, so the format cannot drift: a model is written by its point values when they decode back to the same points, otherwise (no schema, not the length of its schema, warnings) by its registers. The device file's JSON Schema is part of that package. The Explorer keeps its own read loop around it (`internal/engine/export.go`), for request pacing and service errors. The JSON Schemas are in `docs/schema/`: `snapshot-1.schema.json` (the export), `recording-1.schema.json` (one line: header, sample, event or footer) and `api-1.schema.json` (API entities as `$defs`); see `docs/schema/README.md`. The `.meta.json` sidecar is internal and has no schema. The device file's schema is published with its code, in go-sunspec's `devicefile` package.
 
 ## 8. HTTP API v1 (daemon)
 
@@ -169,6 +169,8 @@ All `/api/v1` requests: `Authorization: Bearer <token>`, `Content-Type: applicat
 | `GET /` and static assets | Embedded web UI unless `--no-ui`. Assets need no token (none contain secrets), SPA fallback, `no-cache` for `index.html`, long-lived caching for hashed assets |
 
 No endpoint accepts a file path, a raw Modbus frame, a function code, or a register write.
+
+Every request and response body, the error envelope and the SSE `data:` payload are described by `docs/schema/api-1.schema.json#/$defs/<Name>` (for example `SessionInfo`, `Event`, `ErrorResponse`). Tests validate the real bodies of every endpoint against them.
 
 SSE: `id:` = monotonically increasing `seq`; the daemon keeps a ring buffer (default 1024 events) and replays from `since` or `Last-Event-ID`; if the gap is larger, it sends `resync` and the client calls `/state`. Event kinds: `sample`, `session_status`, `discovery_changed`, `recording_status`, `error`, `resync`. The web UI reads the stream with `fetch` (not `EventSource`) so it can send the bearer header.
 

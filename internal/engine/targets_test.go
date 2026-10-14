@@ -12,7 +12,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/otfabric/go-modbus"
 	sunspec "github.com/otfabric/go-sunspec"
+	"github.com/otfabric/go-sunspec/devicefile"
 
 	"github.com/otfabric/sunspec-explorer/internal/model"
 	"github.com/otfabric/sunspec-explorer/internal/service"
@@ -404,36 +404,24 @@ func TestExportSession(t *testing.T) {
 	if file.Mime != "application/json" || !strings.HasPrefix(file.Name, "sunspec-device-") || !strings.HasSuffix(file.Name, ".json") {
 		t.Errorf("file = %s %s", file.Name, file.Mime)
 	}
-	var doc struct {
-		UnitID      uint8  `json:"unit_id"`
-		BaseAddress uint16 `json:"base_address"`
-		Models      []*fileModel
+	// go-sunspec reads the file back the way "sunspecctl serve" does.
+	parsed, err := devicefile.Parse([]byte(file.Text))
+	if err != nil {
+		t.Fatalf("the device file does not parse: %v", err)
 	}
-	if err := json.Unmarshal([]byte(file.Text), &doc); err != nil {
-		t.Fatalf("device file is not JSON: %v", err)
-	}
-	if doc.UnitID != 1 || doc.BaseAddress != 40000 || len(doc.Models) != 6 {
-		t.Fatalf("device file = unit %d base %d, %d models", doc.UnitID, doc.BaseAddress, len(doc.Models))
+	if *parsed.UnitID != 1 || *parsed.BaseAddress != 40000 || len(parsed.Models) != 6 {
+		t.Fatalf("device file = unit %d base %d, %d models", *parsed.UnitID, *parsed.BaseAddress, len(parsed.Models))
 	}
 	// Point order is schema order, as a person would read it.
 	if !strings.Contains(file.Text, `"Mn": "OT Fabric"`) || strings.Index(file.Text, `"Mn"`) > strings.Index(file.Text, `"SN"`) {
 		t.Error("points are not in schema order")
 	}
+	if parsed.Models[idxVendor].Registers == nil || parsed.Models[idxInverter].Registers != nil ||
+		len(parsed.Models[idxMPPT1].Groups["module"]) != 2 {
+		t.Errorf("vendor model by registers and the others by points expected: %+v", parsed.Models[idxVendor])
+	}
 	// Served again, the file is the same device, register for register.
-	var models []sunspec.ServerModel
-	for _, m := range doc.Models {
-		sm := sunspec.ServerModel{ID: m.ID}
-		if m.Registers != nil {
-			sm.Registers = m.Registers
-		} else {
-			sm.Values = m.values()
-		}
-		models = append(models, sm)
-	}
-	if doc.Models[idxVendor].Registers == nil || doc.Models[idxInverter].Registers != nil || len(doc.Models[idxMPPT1].Groups["module"]) != 2 {
-		t.Errorf("vendor model by registers and the others by points expected: %+v", doc.Models[idxVendor])
-	}
-	replay, err := sunspec.NewServer(&sunspec.ServerOptions{UnitID: doc.UnitID, BaseAddress: doc.BaseAddress}, models...)
+	replay, err := parsed.Server(nil)
 	if err != nil {
 		t.Fatalf("the device file does not describe a device: %v", err)
 	}
@@ -491,44 +479,6 @@ func TestExportSession(t *testing.T) {
 	if _, err := e.ExportSession(ctx, info.ID, "pdf"); service.CodeOf(err) != service.CodeInvalidArgument {
 		t.Errorf("unknown format = %v", err)
 	}
-}
-
-// fileModel reads a model of a device file back, for the replay.
-type fileModel struct {
-	ID        uint16                  `json:"id"`
-	Points    map[string]any          `json:"points"`
-	Groups    map[string][]*fileGroup `json:"groups"`
-	Registers []uint16                `json:"registers"`
-}
-
-type fileGroup struct {
-	Points map[string]any          `json:"points"`
-	Groups map[string][]*fileGroup `json:"groups"`
-}
-
-func (m *fileModel) values() *sunspec.Values {
-	return (&fileGroup{Points: m.Points, Groups: m.Groups}).values()
-}
-
-func (g *fileGroup) values() *sunspec.Values {
-	v := &sunspec.Values{}
-	for name, value := range g.Points {
-		// A list is the raw registers of a point.
-		if list, ok := value.([]any); ok {
-			regs := make([]uint16, len(list))
-			for i, r := range list {
-				regs[i] = uint16(r.(float64))
-			}
-			value = regs
-		}
-		v.Set(name, value)
-	}
-	for name, instances := range g.Groups {
-		for _, inst := range instances {
-			v.Add(name, inst.values())
-		}
-	}
-	return v
 }
 
 // A recording converts to CSV as it is read, sample numbers included.

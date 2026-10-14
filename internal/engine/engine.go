@@ -187,10 +187,24 @@ func (e *Engine) features() []string {
 	if !e.opts.NoSerial {
 		features = append(features, model.FeatureSerial)
 	}
-	if e.opts.TLS != nil {
+	if e.tlsConfig() != nil {
 		features = append(features, model.FeatureTLS)
 	}
 	return features
+}
+
+// SetTLS replaces the identity that tcp+tls:// targets are opened with; nil
+// removes it. Sessions that are open keep their connection.
+func (e *Engine) SetTLS(cfg *TLSConfig) {
+	e.mu.Lock()
+	e.opts.TLS = cfg
+	e.mu.Unlock()
+}
+
+func (e *Engine) tlsConfig() *TLSConfig {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.opts.TLS
 }
 
 // allowed applies the engine's rules to a target before anything is opened.
@@ -207,9 +221,9 @@ func (e *Engine) allowed(t *target) error {
 		}
 		return nil
 	case schemeTLS:
-		if e.opts.TLS == nil {
+		if e.tlsConfig() == nil {
 			return service.Errorf(service.CodeNotAllowed,
-				"TLS targets need the engine to be started with a client certificate and CA (--tls-cert, --tls-key, --tls-ca)")
+				"TLS targets need a TLS identity: a client certificate with its key, and a CA (--tls-cert, --tls-key, --tls-ca, or the TLS identity dialog of the desktop application)")
 		}
 	}
 	if e.opts.AllowTarget != nil {

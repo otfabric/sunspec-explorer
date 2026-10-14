@@ -38,7 +38,7 @@ LDFLAGS     = -ldflags "-s -w -X github.com/otfabric/sunspec-explorer/internal/b
 # from. The Wails shell (cmd/sunspec-explorer, internal/gui) needs a window and is covered
 # by the frontend tests.
 TEST_PKGS     := ./internal/engine/... ./internal/readonly/... ./internal/service/... ./internal/model/... ./internal/buildinfo/... \
-	./internal/api/... ./internal/web/... ./internal/daemon/... ./cmd/sunspec-explorerd/...
+	./internal/api/... ./internal/web/... ./internal/daemon/... ./internal/settings/... ./cmd/sunspec-explorerd/...
 COVERAGE_MIN  := 90
 
 all: check build ## Run all checks and build

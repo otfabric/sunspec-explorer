@@ -3,7 +3,7 @@
 // adjust the names here when the Go binding is final.
 
 import { Browser, Call, Clipboard, Events } from '@wailsio/runtime';
-import type { Mode, Platform } from '../../app/platform/platform';
+import type { Mode, Platform, TLSSettings, TlsFileKind, TlsIdentity } from '../../app/platform/platform';
 import { loadTheme, persistTheme } from '../../app/platform/themeStorage';
 import { ServiceError, toServiceError, type ErrorCode, type Service } from '../../app/service/service';
 import type {
@@ -90,6 +90,12 @@ export class WailsPlatform implements Platform {
   readonly mode: Mode = { kind: 'local' };
   persistTheme = persistTheme;
   loadTheme = loadTheme;
+  // The Go side shows the native Open dialog and remembers the choice.
+  readonly tls: TlsIdentity = {
+    settings: () => call<TLSSettings>('TLSSettings'),
+    choose: (kind: TlsFileKind) => call<TLSSettings>('ChooseTLSFile', kind),
+    clear: () => call<TLSSettings>('ClearTLS'),
+  };
 
   /** The Go side shows the native Save dialog and returns the path, or "" when cancelled. */
   async saveFile(name: string, mime: string, text: string): Promise<boolean> {

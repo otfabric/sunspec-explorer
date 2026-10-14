@@ -16,7 +16,7 @@ import (
 	"time"
 
 	sunspec "github.com/otfabric/go-sunspec"
-	"github.com/otfabric/go-sunspec/registry"
+	"github.com/otfabric/go-sunspec/devicefile"
 
 	"github.com/otfabric/sunspec-explorer/internal/model"
 	"github.com/otfabric/sunspec-explorer/internal/service"
@@ -183,60 +183,15 @@ func (e *Engine) OpenRecordingCSV(ctx context.Context, recID string) (io.ReadClo
 	return pr, info, nil
 }
 
-// The device file of "sunspecctl serve" and "sunspecctl capture": a device
-// as its models, each by point values or by raw registers.
-type deviceFile struct {
-	UnitID      uint8             `json:"unit_id"`
-	BaseAddress uint16            `json:"base_address"`
-	Models      []deviceFileModel `json:"models"`
-}
-
-type deviceFileModel struct {
-	ID   uint16 `json:"id"`
-	Name string `json:"name,omitempty"`
-	deviceFileGroup
-	Registers []uint16 `json:"registers,omitempty"`
-}
-
-type deviceFileGroup struct {
-	Points orderedPoints                 `json:"points,omitempty"`
-	Groups map[string][]*deviceFileGroup `json:"groups,omitempty"`
-}
-
-// orderedPoints is a JSON object of point values in schema order.
-type orderedPoints []pointValue
-
-type pointValue struct {
-	name  string
-	value any
-}
-
-// MarshalJSON writes the points as one object, in order.
-func (l orderedPoints) MarshalJSON() ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	for i, e := range l {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		name, _ := json.Marshal(e.name) // a string always marshals
-		value, err := json.Marshal(e.value)
-		if err != nil {
-			return nil, fmt.Errorf("point %s: %w", e.name, err)
-		}
-		buf.Write(name)
-		buf.WriteByte(':')
-		buf.Write(value)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
-
-// deviceFile reads every model and describes the device as a device file.
-// The caller holds the I/O token. Unlike a snapshot, a device file is all or
-// nothing: with a model missing it would describe another device.
+// deviceFile reads every model and describes the device as a device file
+// for "sunspecctl serve", in go-sunspec's devicefile format: a model that
+// decodes cleanly by its point values, any other one by its registers. The
+// caller holds the I/O token. Unlike a snapshot, a device file is all or
+// nothing: with a model missing it would describe another device. (The read
+// loop is the engine's own, not devicefile.Capture, so that it paces its
+// requests and reports failures as service errors.)
 func (s *session) deviceFile(ctx context.Context) (string, error) {
-	file := deviceFile{UnitID: s.dev.UnitID, BaseAddress: s.dev.Discovery.BaseAddress, Models: []deviceFileModel{}}
+	file := devicefile.New(s.dev.UnitID, s.dev.Discovery.BaseAddress)
 	for n, inst := range s.dev.Discovery.Models {
 		if n > 0 && !s.pace(ctx) {
 			return "", ctx.Err()
@@ -250,64 +205,11 @@ func (s *session) deviceFile(ctx context.Context) (string, error) {
 			}
 			return "", service.Wrap(service.CodeConnectFailed, err, "model %d at position %d could not be read", inst.Header.ID, n)
 		}
-		file.Models = append(file.Models, deviceFileModelOf(dm))
+		file.Models = append(file.Models, devicefile.FromDecoded(dm, false))
 	}
-	b, err := json.MarshalIndent(file, "", "  ")
+	b, err := file.Marshal()
 	if err != nil {
 		return "", service.Wrap(service.CodeInternal, err, "device file")
 	}
-	return string(b) + "\n", nil
-}
-
-// deviceFileModelOf describes a model as it was read. A model that decoded
-// cleanly is described by its point values, which a person can read and
-// edit; any other one (no schema, not the length of its schema, values that
-// would not encode back to the same registers) by its registers, so that
-// serving the file reproduces the device exactly.
-func deviceFileModelOf(dm *sunspec.DecodedModel) deviceFileModel {
-	data := dm.RawRegisters
-	// A model that went through the decoder carries its two header
-	// registers; one that did not holds the data registers only.
-	if dm.Schema != nil && len(data) >= 2 {
-		data = data[2:]
-	}
-	raw := deviceFileModel{ID: dm.ModelID, Name: dm.Name, Registers: append([]uint16{}, data...)}
-	if dm.Group == nil || dm.Schema == nil || len(dm.Warnings) != 0 {
-		return raw
-	}
-	values := dm.Values()
-	regs, err := sunspec.EncodeModel(dm.Schema, values)
-	if err != nil || len(regs) != len(dm.RawRegisters) {
-		return raw
-	}
-	for i := range regs {
-		if regs[i] != dm.RawRegisters[i] {
-			return raw
-		}
-	}
-	m := deviceFileModel{ID: dm.ModelID, Name: dm.Name, deviceFileGroup: deviceFileGroupOf(dm.Schema.Group, values)}
-	if _, err := json.Marshal(m); err != nil {
-		return raw
-	}
-	return m
-}
-
-// deviceFileGroupOf lists the values of one group instance in schema order.
-func deviceFileGroupOf(meta *registry.GroupMeta, v *sunspec.Values) deviceFileGroup {
-	var g deviceFileGroup
-	for _, pm := range meta.Points {
-		if value, ok := v.Points[pm.Name]; ok {
-			g.Points = append(g.Points, pointValue{name: pm.Name, value: value})
-		}
-	}
-	for _, child := range meta.Groups {
-		for _, inst := range v.Groups[child.Name] {
-			if g.Groups == nil {
-				g.Groups = make(map[string][]*deviceFileGroup)
-			}
-			cg := deviceFileGroupOf(child, inst)
-			g.Groups[child.Name] = append(g.Groups[child.Name], &cg)
-		}
-	}
-	return g
+	return string(b), nil
 }

@@ -5,7 +5,6 @@ package daemon
 import (
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"sort"
 )
 
@@ -39,19 +38,6 @@ func (l *SerialAllowList) Allow(device string) error {
 
 // Ports lists the devices that exist and match a pattern.
 func (l *SerialAllowList) Ports() []string { return globAll(l.patterns) }
-
-// LocalSerialPorts lists the serial devices of this machine that are worth
-// offering in the desktop application. On Windows, where ports are not
-// files, it offers none: the name (COM3) is typed.
-func LocalSerialPorts() []string {
-	switch runtime.GOOS {
-	case "darwin":
-		return globAll([]string{"/dev/cu.*"})
-	case "windows":
-		return nil
-	}
-	return globAll([]string{"/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAMA*", "/dev/ttyS[0-9]", "/dev/serial/by-id/*"})
-}
 
 func globAll(patterns []string) []string {
 	seen := make(map[string]bool)

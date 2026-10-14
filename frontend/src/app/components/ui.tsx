@@ -67,9 +67,9 @@ const CHIP_TONE = {
   wire: 'border-wire text-wire',
 };
 
-export function Chip({ tone = 'neutral', children }: { tone?: keyof typeof CHIP_TONE; children: ReactNode }) {
+export function Chip({ tone = 'neutral', title, children }: { tone?: keyof typeof CHIP_TONE; title?: string; children: ReactNode }) {
   return (
-    <span className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[11px] whitespace-nowrap ${CHIP_TONE[tone]}`}>
+    <span title={title} className={`inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[11px] whitespace-nowrap ${CHIP_TONE[tone]}`}>
       {children}
     </span>
   );

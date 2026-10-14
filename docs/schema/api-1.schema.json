@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otfabric.io/schemas/sunspec-explorer/api-1.schema.json",
+  "title": "SunSpec Explorer API v1 entities",
+  "description": "Every entity of the Service interface and of the HTTP API v1 (/api/v1) of the OT Fabric SunSpec Explorer, as named definitions: reference one as api-1.schema.json#/$defs/<Name>, for example #/$defs/SessionInfo. This document itself constrains nothing. Request bodies: TargetConfig, SnapshotRequest, PollConfig, RecordingConfig, ExportRequest. All timestamps are UTC, RFC 3339. All register addresses are zero-based Modbus addresses. Fields described as omitted are absent, not null.",
+  "$defs": {
+    "Health": {
+      "description": "A running engine. GET /api/v1/health.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "version", "api_version", "uptime_s", "go_sunspec", "registry_models", "time",
+        "features"
+      ],
+      "properties": {
+        "status": { "type": "string", "description": "ok." },
+        "version": { "type": "string", "description": "Version of the application." },
+        "api_version": { "type": "string", "pattern": "^1\\.[0-9]+$", "description": "Version of the Service contract and of the HTTP API. The major part changes on incompatible changes, the minor part on additions." },
+        "uptime_s": { "type": "integer", "minimum": 0 },
+        "go_sunspec": { "type": "string", "description": "Version of the go-sunspec library." },
+        "registry_models": { "type": "integer", "minimum": 0, "description": "Number of SunSpec model schemas the library knows." },
+        "time": { "type": "string", "format": "date-time", "description": "The engine's clock, for clients to notice a skew." },
+        "features": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "What this engine is set up for beyond the basics. Known features: recording, serial, tls." }
+      }
+    },
+    "SerialConfig": {
+      "description": "Settings of a serial line (rtu:// targets).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baud": { "description": "300..1000000. 0 or absent selects 9600.", "anyOf": [{ "const": 0 }, { "type": "integer", "minimum": 300, "maximum": 1000000 }] },
+        "data_bits": { "enum": [0, 7, 8], "description": "0 or absent selects 8." },
+        "parity": { "enum": ["", "none", "even", "odd"], "description": "Empty or absent selects none." },
+        "stop_bits": { "enum": [0, 1, 2], "description": "0 or absent selects 1." }
+      }
+    },
+    "TargetConfig": {
+      "description": "What a client sends to open a session. Body of POST /api/v1/sessions.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "description": "tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<serial device>. No credentials, path or query." },
+        "unit_id": { "description": "Modbus unit ID: 1..247, or 255. 0 or absent selects 1.", "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 247 }, { "const": 255 }] },
+        "timeout_ms": { "description": "Request timeout in milliseconds, 100..60000. 0 or absent selects the engine default.", "anyOf": [{ "const": 0 }, { "type": "integer", "minimum": 100, "maximum": 60000 }] },
+        "reg_type": { "enum": ["", "holding", "input"], "description": "Empty or absent selects holding." },
+        "base_addresses": { "type": "array", "items": { "$ref": "#/$defs/Address" }, "maxItems": 16, "description": "Addresses probed for the SunSpec marker. Empty or absent selects the go-sunspec defaults." },
+        "max_models": { "type": "integer", "minimum": 0, "maximum": 1024, "description": "Cap on the number of models read from the chain. 0 or absent selects the go-sunspec default." },
+        "serial": { "$ref": "#/$defs/SerialConfig", "description": "Only with an rtu:// target." }
+      }
+    },
+    "Target": {
+      "description": "The device of a session.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "unit_id", "reg_type", "base_address"],
+      "properties": {
+        "url": { "type": "string", "description": "tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<device>; never with credentials." },
+        "unit_id": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Modbus unit ID: 1..247, or 255." },
+        "reg_type": { "enum": ["holding", "input"] },
+        "base_address": { "$ref": "#/$defs/Address", "description": "Address of the SunS marker." }
+      }
+    },
+    "ProbeAttempt": {
+      "description": "One base-address probe made during detection.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_address", "reg_type", "matched"],
+      "properties": {
+        "base_address": { "$ref": "#/$defs/Address" },
+        "reg_type": { "enum": ["holding", "input"] },
+        "matched": { "type": "boolean", "description": "The SunS marker was found at this address." },
+        "error": { "type": "string", "description": "Why the probe failed; omitted when the device answered." }
+      }
+    },
+    "DeviceIdentity": {
+      "description": "Identification points of the Common model (model 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manufacturer", "model", "version", "serial"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "options": { "type": "string", "description": "Omitted when empty." },
+        "version": { "type": "string" },
+        "serial": { "type": "string" }
+      }
+    },
+    "ModelInfo": {
+      "description": "One model instance found by discovery.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index", "id", "name", "start_address", "length", "schema_known", "decoding_supported",
+        "static_only"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "Position in the model chain. A device can hold several models with the same id." },
+        "id": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "SunSpec model ID." },
+        "name": { "type": "string" },
+        "start_address": { "$ref": "#/$defs/Address", "description": "Address of the model's ID register." },
+        "length": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Number of data registers after the ID and length registers." },
+        "schema_known": { "type": "boolean", "description": "The library has a schema of this model ID." },
+        "decoding_supported": { "type": "boolean" },
+        "static_only": { "type": "boolean", "description": "The model holds nothing that changes by itself (as Common): it is read once, not in every poll cycle." }
+      }
+    },
+    "SessionInfo": {
+      "description": "A session and the discovery result it reads from. Answer of POST /api/v1/sessions, GET /api/v1/sessions/{id} and POST /api/v1/sessions/{id}/rediscover.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "status", "opened_at", "discovered_at", "models", "warnings", "attempts"],
+      "properties": {
+        "id": { "type": "string" },
+        "target": { "$ref": "#/$defs/Target" },
+        "status": { "enum": ["connected", "reconnecting", "closed"], "description": "connected: the last exchange with the device succeeded. reconnecting: the device stopped answering and the engine retries with backoff. closed: the session was closed (seen in the last session_status event of a session only)." },
+        "status_detail": { "type": "string", "description": "Why the session is reconnecting; omitted otherwise." },
+        "opened_at": { "type": "string", "format": "date-time" },
+        "discovered_at": { "type": "string", "format": "date-time", "description": "Time of the last discovery." },
+        "device": { "$ref": "#/$defs/DeviceIdentity", "description": "Omitted when the device has no Common model or it could not be read." },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelInfo" }, "description": "The model chain, in chain order." },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/ProbeAttempt" }, "description": "The probes of the last discovery." }
+      }
+    },
+    "SessionList": { "type": "array", "items": { "$ref": "#/$defs/SessionInfo" }, "description": "Answer of GET /api/v1/sessions." },
+    "PointView": {
+      "description": "One decoded point.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "implemented", "raw", "scaled", "address", "offset", "size"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "description": "SunSpec point type, for example int16, acc32, enum16, sunssf, string." },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
+        "description": { "type": "string", "description": "Metadata: present at level full." },
+        "access": { "enum": ["R", "RW"], "description": "Metadata: present at level full." },
+        "mandatory": { "type": "boolean", "description": "Metadata: present at level full." },
+        "static": { "type": "boolean", "description": "Metadata: present at level full." },
+        "units": { "type": "string" },
+        "implemented": { "type": "boolean", "description": "false: the device reports the SunSpec not-implemented value; raw then holds that sentinel, not a measurement." },
+        "raw": {
+          "description": "Unscaled value: a number, a string, a list of registers for a type that is not decoded, or null for a float that is not a number.",
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string" },
+            { "type": "null" },
+            { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }
+          ]
+        },
+        "scaled": { "type": ["number", "null"], "description": "raw times 10^sf_raw, or null without a resolved scale factor." },
+        "sf_name": { "type": "string", "description": "Name of the scale factor point." },
+        "sf_raw": { "type": "integer", "minimum": -32768, "maximum": 32767, "description": "Value of the scale factor point." },
+        "symbols": { "type": "array", "items": { "type": "string" }, "description": "Names of the active enum value or bitfield flags." },
+        "address": { "$ref": "#/$defs/Address", "description": "Absolute address of the point's first register." },
+        "offset": { "type": "integer", "minimum": 0, "description": "Register offset from the model's ID register." },
+        "size": { "type": "integer", "minimum": 1, "description": "Number of registers." }
+      }
+    },
+    "GroupView": {
+      "description": "One decoded group instance: its points and the group instances nested in it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "index", "points", "groups"],
+      "properties": {
+        "name": { "type": "string" },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
+        "index": { "type": "integer", "minimum": 0, "description": "1-based instance number within the parent; 0 for the top-level group." },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/PointView" } },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/GroupView" } }
+      }
+    },
+    "ModelResult": {
+      "description": "The outcome of reading one model instance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index", "id", "name", "start_address", "length", "schema_known", "status", "error",
+        "read_duration_ms", "warnings", "stale", "group", "raw_registers"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "Position in the model chain. A device can hold several models with the same id." },
+        "id": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "SunSpec model ID." },
+        "name": { "type": "string" },
+        "start_address": { "$ref": "#/$defs/Address", "description": "Address of the model's ID register." },
+        "length": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Number of data registers after the ID and length registers." },
+        "schema_known": { "type": "boolean" },
+        "status": { "enum": ["ok", "error", "changed"], "description": "changed: the device no longer holds this model at this address." },
+        "error": { "type": ["string", "null"], "description": "Why the read failed; null when status is ok." },
+        "read_duration_ms": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "stale": { "type": "boolean", "description": "While polling: the last good read of the model is older than two poll intervals." },
+        "last_ok_at": { "type": "string", "format": "date-time", "description": "Time of the last good read of the model in this session; omitted when there was none." },
+        "group": { "description": "The decoded model, or null when it was not decoded (no schema, or the read failed).", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/GroupView" }] },
+        "raw_registers": {
+          "description": "Data registers of a model without schema, or of every model when the request asked for them; otherwise null.",
+          "oneOf": [{ "type": "null" }, { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }]
+        }
+      }
+    },
+    "SnapshotRequest": {
+      "description": "What a single read covers. Body of POST /api/v1/sessions/{id}/snapshot; an empty body selects the defaults.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model_indexes": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Chain positions. Empty or absent selects every model." },
+        "metadata": { "enum": ["", "full", "compact"], "description": "Empty or absent selects full." },
+        "include_raw": { "type": "boolean", "description": "Add the raw registers of decoded models too." }
+      }
+    },
+    "AppInfo": {
+      "description": "The application that wrote the file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "description": "sunspec-explorer." },
+        "version": { "type": "string" }
+      }
+    },
+    "LibInfo": {
+      "description": "The libraries that decoded the data.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["go_sunspec", "registry_models"],
+      "properties": {
+        "go_sunspec": { "type": "string", "description": "Version of the go-sunspec library that decoded the data." },
+        "registry_models": { "type": "integer", "minimum": 0, "description": "Number of SunSpec model schemas the library knows." }
+      }
+    },
+    "Snapshot": {
+      "description": "One read of a device and, saved as a file, the snapshot export (the same document as snapshot-1.schema.json). Answer of POST /api/v1/sessions/{id}/snapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema", "app", "libs", "session_id", "captured_at", "read_duration_ms", "metadata",
+        "target", "device", "models", "warnings"
+      ],
+      "properties": {
+        "schema": { "const": "otfabric.sunspec-explorer.snapshot/1" },
+        "app": { "$ref": "#/$defs/AppInfo" },
+        "libs": { "$ref": "#/$defs/LibInfo" },
+        "session_id": { "type": "string" },
+        "captured_at": { "type": "string", "format": "date-time", "description": "Start of the first request. Models are read one after another: a snapshot is not an atomic view of the device." },
+        "read_duration_ms": { "type": "integer", "minimum": 0 },
+        "metadata": { "enum": ["full", "compact"], "description": "full: points carry label, description, access, mandatory and static. compact: they do not." },
+        "target": { "$ref": "#/$defs/Target" },
+        "device": { "description": "Identification from the Common model, or null when the device has none or it could not be read.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/DeviceIdentity" }] },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelResult" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "PollConfig": {
+      "description": "Body of PUT /api/v1/sessions/{id}/polling; an empty body selects the defaults.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval_s": { "type": "integer", "minimum": 0, "maximum": 3600, "description": "Start-to-start interval in whole seconds, 1..3600. 0 or absent selects 5." },
+        "model_indexes": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Chain positions. Empty or absent selects every model that is not static-only; the static-only ones are then read once, in the first cycle." }
+      }
+    },
+    "PollState": {
+      "description": "The polling of a session.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "interval_s", "model_indexes", "cycles", "failures", "overruns"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "interval_s": { "type": "integer", "minimum": 0, "maximum": 3600, "description": "0 when the session was never polled." },
+        "model_indexes": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "The selection polling was started with; empty for the default selection." },
+        "started_at": { "type": "string", "format": "date-time", "description": "Omitted when the session was never polled." },
+        "cycles": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "integer", "minimum": 0, "description": "Cycles in which at least one model failed." },
+        "overruns": { "type": "integer", "minimum": 0, "description": "Ticks skipped because a cycle was still running." },
+        "last_sample_at": { "type": "string", "format": "date-time", "description": "Omitted before the first sample." }
+      }
+    },
+    "Sample": {
+      "description": "The result of one poll cycle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "seq", "captured_at", "read_duration_ms", "overruns", "metadata", "models"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "seq": { "type": "integer", "minimum": 1, "description": "Number of the sample within its polling run, starting at 1. It starts again at 1 when polling is started again." },
+        "captured_at": { "type": "string", "format": "date-time", "description": "Start of the first request of the cycle. Models are read one after another: a sample is not an atomic view of the device." },
+        "read_duration_ms": { "type": "integer", "minimum": 0 },
+        "overruns": { "type": "integer", "minimum": 0, "description": "Poll ticks skipped so far in this polling run because a cycle was still running." },
+        "metadata": { "enum": ["full", "compact"], "description": "Samples are compact: points carry no label, description, access, mandatory and static." },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelResult" }, "description": "The models of this cycle. Static-only models are in the first sample of a run only, unless they were selected." }
+      }
+    },
+    "SessionState": {
+      "description": "Everything a client needs to resume showing a session. Answer of GET /api/v1/sessions/{id}/state.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session", "polling", "last_sample", "recording"],
+      "properties": {
+        "session": { "$ref": "#/$defs/SessionInfo" },
+        "polling": { "$ref": "#/$defs/PollState" },
+        "last_sample": { "description": "The last sample of the current polling run, or null.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Sample" }] },
+        "recording": { "description": "The running recording of the session, or null.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/RecordingInfo" }] }
+      }
+    },
+    "Event": {
+      "description": "One entry of the event stream: the JSON in the data field of a server-sent event of GET /api/v1/events.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "kind", "at"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 0, "description": "Increases by one per event of an engine; the id of the server-sent event. A resync carries the number of the last event before it." },
+        "kind": { "enum": ["sample", "session_status", "discovery_changed", "recording_status", "error", "resync"], "description": "sample: a poll cycle ended (sample; recording with the counters while the session records). session_status: a session was opened, closed, lost or found again (session). discovery_changed: the model chain was discovered again (session). recording_status: a recording started or stopped (recording). error: something failed in the background (message). resync: the subscriber missed events and must fetch the state of its sessions again." },
+        "session_id": { "type": "string", "description": "Omitted for a resync." },
+        "at": { "type": "string", "format": "date-time" },
+        "sample": { "$ref": "#/$defs/Sample" },
+        "session": { "$ref": "#/$defs/SessionInfo" },
+        "recording": { "$ref": "#/$defs/RecordingInfo" },
+        "message": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "sample" }
+            },
+            "required": ["kind"]
+          },
+          "then": { "required": ["session_id", "sample"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "enum": ["session_status", "discovery_changed"] }
+            },
+            "required": ["kind"]
+          },
+          "then": { "required": ["session_id", "session"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "recording_status" }
+            },
+            "required": ["kind"]
+          },
+          "then": { "required": ["session_id", "recording"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "error" }
+            },
+            "required": ["kind"]
+          },
+          "then": { "required": ["message"] }
+        }
+      ]
+    },
+    "RecordingConfig": {
+      "description": "Body of POST /api/v1/sessions/{id}/recordings; an empty body selects the defaults.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "pattern": "^([a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63})?$", "description": "Base name of the recording files, never a path. Empty or absent lets the engine choose one." },
+        "rotate_bytes": { "type": "integer", "minimum": 0, "description": "Start a new file after this many bytes. 0 or absent selects the engine default." }
+      }
+    },
+    "RecordingInfo": {
+      "description": "A recording. Answer of POST /api/v1/sessions/{id}/recordings and POST /api/v1/recordings/{rid}/stop. The lines of the recording itself (GET /api/v1/recordings/{rid}/download) are described by recording-1.schema.json.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "session_id", "name", "state", "started_at", "samples", "failures", "size_bytes",
+        "files", "location", "temporary"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "session_id": { "type": "string", "description": "The session that was recorded." },
+        "name": { "type": "string" },
+        "state": { "enum": ["running", "stopped", "interrupted"], "description": "interrupted: the engine was killed while the recording ran; the file has no footer." },
+        "started_at": { "type": "string", "format": "date-time" },
+        "stopped_at": { "type": "string", "format": "date-time", "description": "Omitted while running. For an interrupted recording: the time of the last write." },
+        "stop_reason": { "enum": ["user", "limit", "disk_space", "session_closed", "shutdown", "error"], "description": "Why a stopped recording stopped; omitted while running and when interrupted. user: stopped by the user. limit: size, total size or age limit. disk_space: the free-space floor was reached. session_closed: the session was closed. shutdown: the engine was shut down. error: a write failed." },
+        "samples": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "integer", "minimum": 0, "description": "Samples in which at least one model failed." },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0, "description": "Number of files the recording is split into." },
+        "location": { "type": "string", "description": "Directory that holds the recording on the engine's host, for display only." },
+        "temporary": { "type": "boolean", "description": "location is ephemeral storage: save a copy." }
+      }
+    },
+    "RecordingList": { "type": "array", "items": { "$ref": "#/$defs/RecordingInfo" }, "description": "Answer of GET /api/v1/recordings: newest first." },
+    "SerialPort": {
+      "description": "A serial device the engine is allowed to open.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" }
+      }
+    },
+    "SerialPortList": { "type": "array", "items": { "$ref": "#/$defs/SerialPort" }, "description": "Answer of GET /api/v1/serial-ports." },
+    "ExportRequest": {
+      "description": "Body of POST /api/v1/sessions/{id}/export.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format"],
+      "properties": {
+        "format": { "enum": ["csv", "devicefile"], "description": "csv: one row per point (long format). devicefile: a device file for sunspecctl serve." }
+      }
+    },
+    "ExportFile": {
+      "description": "A file rendered by the engine for the client to save. Answer of POST /api/v1/sessions/{id}/export.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mime", "text"],
+      "properties": {
+        "name": { "type": "string", "description": "Suggested file name." },
+        "mime": { "type": "string", "description": "Media type of text." },
+        "text": { "type": "string", "description": "The file's content." }
+      }
+    },
+    "Error": {
+      "description": "The error of every Service method.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_argument", "not_found", "limit_exceeded", "not_allowed", "connect_failed",
+            "not_sunspec", "discovery_failed", "not_implemented", "unauthorized", "canceled",
+            "internal"
+          ],
+          "description": "Clients switch on it. HTTP status: invalid_argument 400 (416 for a range beyond a recording), unauthorized 401 (403 for a Host header the daemon does not answer to), not_allowed 403, not_found 404, canceled 408, limit_exceeded 429, internal 500, not_implemented 501, connect_failed, not_sunspec and discovery_failed 502."
+        },
+        "message": { "type": "string", "description": "Written for the user." },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/ProbeAttempt" }, "description": "The detection probes of a failed open or re-discovery (connect_failed, not_sunspec, discovery_failed)." }
+      }
+    },
+    "ErrorResponse": {
+      "description": "The body of every HTTP answer with status 400 or above under /api/v1.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": { "$ref": "#/$defs/Error" }
+      }
+    },
+    "Address": { "description": "A zero-based Modbus register address.", "type": "integer", "minimum": 0, "maximum": 65535 }
+  }
+}

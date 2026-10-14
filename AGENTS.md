@@ -8,7 +8,7 @@ A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to 
 
 ## Read these, in this order
 
-1. `docs/REQUIREMENTS.md`: what to build, numbered requirements (R1..R21), acceptance tests (A1..A18).
+1. `docs/REQUIREMENTS.md`: what to build, numbered requirements (R1..R21), acceptance tests (A1..A19).
 2. `docs/ARCHITECTURE.md`: how: artifacts, layering, Service interface, API, data formats, security, milestones.
 3. `docs/BRANDING.md`: OT Fabric visual identity, tokens, icon rules, accessibility numbers.
 4. `docs/PROPOSAL-REVIEW.md`: why the original proposal was changed, what was verified, what is still unverified.
@@ -81,6 +81,13 @@ docs/                      the four documents above, REMOTE-USE.md, schema/ (JSO
 
 - **The daemon is also a container image** (`packaging/Dockerfile`, `make docker`), mainly for trying it on macOS. Publish its port on 127.0.0.1 only. For local testing, `sunspecctl serve` is the simulated device (CI must not depend on it).
 
+### Also decided (2026-10-14)
+
+- **Static-only models are not polled by default** (models whose points are all static, padding or writable: 1, 5, 6, 9, 14, 18, 702 and two vendor models). Confirmed by the user: the user can tick such a model in the list to poll it anyway.
+- **Every entity has a published JSON Schema** (`docs/schema/`): snapshot, recording lines, all API entities; the device file's schema lives with its code in go-sunspec. New or changed entities need their schema and a test that validates real output against it.
+- **The device file format lives in go-sunspec** (`devicefile` package), shared by sunspecctl and the Explorer; do not reimplement it here.
+- **Website entry**: later, only when the user asks.
+
 ## Open questions
 
 None blocking. Revisit signing and a persistent default data directory before a public release.
@@ -91,4 +98,4 @@ M1 Local end-to-end behind `Service` (frontend written against the TS `Service`/
 
 ## Definition of done for any change
 
-`make check` passes; new behavior has a test against go-sunspec's `testutil` fixture server or an in-process `sunspec.Server` (tests only); no new write-capable call paths; UI changes use tokens, not hard-coded colors; both themes checked in both the Wails and the web build.
+`make check` passes; a change to a DTO in `internal/model` is made in `docs/schema/` too (shared `$defs` in all three files); new behavior has a test against go-sunspec's `testutil` fixture server or an in-process `sunspec.Server` (tests only); no new write-capable call paths; UI changes use tokens, not hard-coded colors; both themes checked in both the Wails and the web build.

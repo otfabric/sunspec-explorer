@@ -204,6 +204,8 @@ export function useExplorer(service: Service) {
         dispatch({ type: 'toggleScope', index });
       },
       report,
+      /** Asks the engine again what it can do, after something changed that. */
+      refreshHealth: checkHealth,
       dismissRestored() {
         dispatch({ type: 'dismissRestored' });
       },
@@ -211,7 +213,7 @@ export function useExplorer(service: Service) {
         dispatch({ type: 'notice', message: null });
       },
     };
-  }, [state, service, sessionId, recordingId, scope, report, refreshState, refreshRecordings]);
+  }, [state, service, sessionId, recordingId, scope, report, refreshState, refreshRecordings, checkHealth]);
 }
 
 export type Explorer = ReturnType<typeof useExplorer>;

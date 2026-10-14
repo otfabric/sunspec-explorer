@@ -15,6 +15,7 @@ import { Sidebar } from './components/Sidebar';
 import { StartRecordingDialog } from './components/StartRecordingDialog';
 import { StatusBar } from './components/StatusBar';
 import { TableFilters } from './components/TableFilters';
+import { TlsDialog } from './components/TlsDialog';
 import { Toolbar } from './components/Toolbar';
 import { Button } from './components/ui';
 import { ErrorIcon } from './icons';
@@ -44,6 +45,7 @@ export function App({ service, platform }: AppProps) {
   const [showDocAddress, setShowDocAddress] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [settingTls, setSettingTls] = useState(false);
   const [namingRecording, setNamingRecording] = useState(false);
   const [showingRecordings, setShowingRecordings] = useState(false);
 
@@ -92,6 +94,7 @@ export function App({ service, platform }: AppProps) {
         engineIsRemote={platform.mode.kind === 'browser'}
         onConnect={explorer.connect}
         onDisconnect={explorer.disconnect}
+        onTlsIdentity={platform.tls && (() => setSettingTls(true))}
       />
       <LinkBanner link={state.link} restored={state.restored} recording={recordingRuns} onDismiss={explorer.dismissRestored} />
       {state.updatedTo !== null && !incompatible && <UpdatedBanner version={state.updatedTo} onReload={() => platform.reload()} />}
@@ -203,6 +206,9 @@ export function App({ service, platform }: AppProps) {
           onDelete={explorer.deleteRecording}
           onClose={() => setShowingRecordings(false)}
         />
+      )}
+      {settingTls && platform.tls && (
+        <TlsDialog tls={platform.tls} onChanged={explorer.refreshHealth} onError={explorer.report} onClose={() => setSettingTls(false)} />
       )}
       {exporting && <ExportDialog onExport={exportAs} onCancel={() => setExporting(false)} />}
     </div>

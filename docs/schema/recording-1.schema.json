@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otfabric.io/schemas/sunspec-explorer/recording-1.schema.json",
+  "title": "SunSpec Explorer recording line",
+  "description": "ONE LINE of a recording of the OT Fabric SunSpec Explorer (schema identifier otfabric.sunspec-explorer.recording/1). A recording is JSON Lines: a header line, then sample and event lines, then a footer line. A recording without footer was interrupted (crash or kill); its last line may then be truncated and is to be ignored. A recording split into several files (<name>.000.jsonl, <name>.001.jsonl, ...) has one header, in the first file, and one footer, in the last. Validate each line on its own. All timestamps are UTC, RFC 3339. All register addresses are zero-based Modbus addresses.",
+  "oneOf": [
+    { "$ref": "#/$defs/RecordingHeader" },
+    { "$ref": "#/$defs/RecordingSample" },
+    { "$ref": "#/$defs/RecordingEvent" },
+    { "$ref": "#/$defs/RecordingFooter" }
+  ],
+  "$defs": {
+    "RecordingHeader": {
+      "description": "The first line: what is recorded, and with what.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schema", "name", "started_at", "interval_s", "app", "libs", "target", "device", "models"],
+      "properties": {
+        "type": { "const": "header" },
+        "schema": { "const": "otfabric.sunspec-explorer.recording/1" },
+        "name": { "type": "string", "pattern": "^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$", "description": "Name of the recording." },
+        "started_at": { "type": "string", "format": "date-time" },
+        "interval_s": { "type": "integer", "minimum": 0, "maximum": 3600, "description": "Poll interval in seconds when the recording started; 0 when polling was not running then (a polling_started event follows)." },
+        "app": { "$ref": "#/$defs/AppInfo" },
+        "libs": { "$ref": "#/$defs/LibInfo" },
+        "target": { "$ref": "#/$defs/Target" },
+        "device": { "description": "Identification from the Common model, or null when the device has none or it could not be read.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/DeviceIdentity" }] },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelInfo" }, "description": "The model chain when the recording started. A discovery_changed event replaces it." }
+      }
+    },
+    "RecordingSample": {
+      "description": "One poll cycle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "seq", "captured_at", "read_duration_ms", "overruns", "metadata", "models"],
+      "properties": {
+        "type": { "const": "sample" },
+        "session_id": { "type": "string" },
+        "seq": { "type": "integer", "minimum": 1, "description": "Number of the sample within its polling run, starting at 1. It starts again at 1 when polling is started again." },
+        "captured_at": { "type": "string", "format": "date-time", "description": "Start of the first request of the cycle. Models are read one after another: a sample is not an atomic view of the device." },
+        "read_duration_ms": { "type": "integer", "minimum": 0 },
+        "overruns": { "type": "integer", "minimum": 0, "description": "Poll ticks skipped so far in this polling run because a cycle was still running." },
+        "metadata": { "const": "compact", "description": "Recordings carry no point metadata: the model IDs and the library version in the header identify the schema." },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelResult" }, "description": "The models of this cycle. Static-only models are in the first sample of a run only, unless they were selected." }
+      }
+    },
+    "RecordingEvent": {
+      "description": "Something that explains a gap or a change in the samples around it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "at", "kind"],
+      "properties": {
+        "type": { "const": "event" },
+        "at": { "type": "string", "format": "date-time" },
+        "kind": { "type": "string", "description": "What happened. Known kinds: gap (polling is not running, or was stopped), polling_started, reconnecting (the device stopped answering), connected (it answers again), discovery_changed (the model chain was discovered again; models holds the new chain). Readers must tolerate kinds they do not know." },
+        "detail": { "type": "string", "description": "Text for people." },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelInfo" }, "description": "The new model chain after a discovery_changed event. The index of the models in later samples refers to it." }
+      }
+    },
+    "RecordingFooter": {
+      "description": "The last line of a recording that was stopped.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "stopped_at", "samples", "failures", "reason"],
+      "properties": {
+        "type": { "const": "footer" },
+        "stopped_at": { "type": "string", "format": "date-time" },
+        "samples": { "type": "integer", "minimum": 0, "description": "Number of sample lines in the recording." },
+        "failures": { "type": "integer", "minimum": 0, "description": "Number of samples in which at least one model was not ok." },
+        "reason": { "enum": ["user", "limit", "disk_space", "session_closed", "shutdown", "error"], "description": "user: stopped by the user. limit: size, total size or age limit. disk_space: the free-space floor was reached. session_closed: the session was closed. shutdown: the engine was shut down. error: a write failed." }
+      }
+    },
+    "Address": { "description": "A zero-based Modbus register address.", "type": "integer", "minimum": 0, "maximum": 65535 },
+    "AppInfo": {
+      "description": "The application that wrote the file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "description": "sunspec-explorer." },
+        "version": { "type": "string" }
+      }
+    },
+    "LibInfo": {
+      "description": "The libraries that decoded the data.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["go_sunspec", "registry_models"],
+      "properties": {
+        "go_sunspec": { "type": "string", "description": "Version of the go-sunspec library that decoded the data." },
+        "registry_models": { "type": "integer", "minimum": 0, "description": "Number of SunSpec model schemas the library knows." }
+      }
+    },
+    "Target": {
+      "description": "The device of a session.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "unit_id", "reg_type", "base_address"],
+      "properties": {
+        "url": { "type": "string", "description": "tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<device>; never with credentials." },
+        "unit_id": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Modbus unit ID: 1..247, or 255." },
+        "reg_type": { "enum": ["holding", "input"] },
+        "base_address": { "$ref": "#/$defs/Address", "description": "Address of the SunS marker." }
+      }
+    },
+    "DeviceIdentity": {
+      "description": "Identification points of the Common model (model 1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manufacturer", "model", "version", "serial"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "options": { "type": "string", "description": "Omitted when empty." },
+        "version": { "type": "string" },
+        "serial": { "type": "string" }
+      }
+    },
+    "ModelInfo": {
+      "description": "One model instance found by discovery.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index", "id", "name", "start_address", "length", "schema_known", "decoding_supported",
+        "static_only"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "Position in the model chain. A device can hold several models with the same id." },
+        "id": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "SunSpec model ID." },
+        "name": { "type": "string" },
+        "start_address": { "$ref": "#/$defs/Address", "description": "Address of the model's ID register." },
+        "length": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Number of data registers after the ID and length registers." },
+        "schema_known": { "type": "boolean", "description": "The library has a schema of this model ID." },
+        "decoding_supported": { "type": "boolean" },
+        "static_only": { "type": "boolean", "description": "The model holds nothing that changes by itself (as Common): it is read once, not in every poll cycle." }
+      }
+    },
+    "ModelResult": {
+      "description": "The outcome of reading one model instance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index", "id", "name", "start_address", "length", "schema_known", "status", "error",
+        "read_duration_ms", "warnings", "stale", "group", "raw_registers"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "Position in the model chain. A device can hold several models with the same id." },
+        "id": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "SunSpec model ID." },
+        "name": { "type": "string" },
+        "start_address": { "$ref": "#/$defs/Address", "description": "Address of the model's ID register." },
+        "length": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "Number of data registers after the ID and length registers." },
+        "schema_known": { "type": "boolean" },
+        "status": { "enum": ["ok", "error", "changed"], "description": "changed: the device no longer holds this model at this address." },
+        "error": { "type": ["string", "null"], "description": "Why the read failed; null when status is ok." },
+        "read_duration_ms": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "stale": { "type": "boolean", "description": "While polling: the last good read of the model is older than two poll intervals." },
+        "last_ok_at": { "type": "string", "format": "date-time", "description": "Time of the last good read of the model in this session; omitted when there was none." },
+        "group": { "description": "The decoded model, or null when it was not decoded (no schema, or the read failed).", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/GroupView" }] },
+        "raw_registers": {
+          "description": "Data registers of a model without schema, or of every model when the request asked for them; otherwise null.",
+          "oneOf": [{ "type": "null" }, { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }]
+        }
+      }
+    },
+    "GroupView": {
+      "description": "One decoded group instance: its points and the group instances nested in it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "index", "points", "groups"],
+      "properties": {
+        "name": { "type": "string" },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
+        "index": { "type": "integer", "minimum": 0, "description": "1-based instance number within the parent; 0 for the top-level group." },
+        "points": { "type": "array", "items": { "$ref": "#/$defs/PointView" } },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/GroupView" } }
+      }
+    },
+    "PointView": {
+      "description": "One decoded point.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "implemented", "raw", "scaled", "address", "offset", "size"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "description": "SunSpec point type, for example int16, acc32, enum16, sunssf, string." },
+        "label": { "type": "string", "description": "Metadata: present at level full." },
+        "description": { "type": "string", "description": "Metadata: present at level full." },
+        "access": { "enum": ["R", "RW"], "description": "Metadata: present at level full." },
+        "mandatory": { "type": "boolean", "description": "Metadata: present at level full." },
+        "static": { "type": "boolean", "description": "Metadata: present at level full." },
+        "units": { "type": "string" },
+        "implemented": { "type": "boolean", "description": "false: the device reports the SunSpec not-implemented value; raw then holds that sentinel, not a measurement." },
+        "raw": {
+          "description": "Unscaled value: a number, a string, a list of registers for a type that is not decoded, or null for a float that is not a number.",
+          "oneOf": [
+            { "type": "number" },
+            { "type": "string" },
+            { "type": "null" },
+            { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }
+          ]
+        },
+        "scaled": { "type": ["number", "null"], "description": "raw times 10^sf_raw, or null without a resolved scale factor." },
+        "sf_name": { "type": "string", "description": "Name of the scale factor point." },
+        "sf_raw": { "type": "integer", "minimum": -32768, "maximum": 32767, "description": "Value of the scale factor point." },
+        "symbols": { "type": "array", "items": { "type": "string" }, "description": "Names of the active enum value or bitfield flags." },
+        "address": { "$ref": "#/$defs/Address", "description": "Absolute address of the point's first register." },
+        "offset": { "type": "integer", "minimum": 0, "description": "Register offset from the model's ID register." },
+        "size": { "type": "integer", "minimum": 1, "description": "Number of registers." }
+      }
+    }
+  }
+}

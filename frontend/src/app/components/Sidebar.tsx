@@ -6,6 +6,8 @@ import type { Selection } from '../state/store';
 import { ModelStatus } from './ModelStatus';
 import { Button, Chip, IconButton } from './ui';
 
+const STATIC_HINT = 'Nothing in this model changes by itself: it is read once, not polled. Tick the box to poll it anyway.';
+
 interface SidebarProps {
   session: SessionInfo;
   results: Record<number, ModelResult>;
@@ -36,7 +38,7 @@ function ModelEntry({ model, result }: { model: ModelInfo; result: ModelResult |
           @{model.start_address} · {model.length} reg
         </span>
         {!model.schema_known && <Chip tone="wire">no schema</Chip>}
-        {model.static_only && <Chip>static</Chip>}
+        {model.static_only && <Chip title={STATIC_HINT}>static</Chip>}
         <ModelStatus result={result} />
       </span>
     </>
