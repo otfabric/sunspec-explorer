@@ -46,6 +46,8 @@ Or run the daemon in a container (`make docker-run`), serve the device on every 
 
 The program icon is generated: `make appicon` renders `cmd/sunspec-explorer/appicon.png`, and `make winres` builds the Windows resource files (`rsrc_windows_*.syso`: icon and manifest) from it. Both results are committed, so a normal build needs neither.
 
+The screenshots and the demo in the README are made the same way, by `docs/media/record-demo.mjs` (usage in its header): rerun it when the user interface changes visibly.
+
 This is for hands-on checks only: the automated tests must not depend on the `sunspecctl` binary.
 
 ## Making Changes
