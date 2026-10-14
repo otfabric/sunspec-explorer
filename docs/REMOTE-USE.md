@@ -16,7 +16,7 @@ browser ── ssh -L (encrypted) ──►  sunspec-explorerd ── Modbus ─
    sunspec-explorerd
    ```
 
-   It listens on `127.0.0.1:8765` only and prints one line with its URL. To see the URL again at any time:
+   It listens on `127.0.0.1:8765` only. Started from a terminal it prints its URL; started as a service or in a container it does not, because the URL carries the access token. To get the URL at any time:
 
    ```sh
    sunspec-explorerd url
@@ -42,10 +42,12 @@ In the page, connect to the device with an address **as the gateway sees it** (f
 ## What to expect
 
 - **The tunnel drops.** The daemon keeps its sessions and keeps polling. The page says "connection lost", retries, and when the tunnel is back it continues where it stopped: missed events are replayed, or the page tells you that some were missed if the gap was too long.
-- **Recording.** A recording runs on the daemon and continues without the page. Recordings are kept in the data directory (64 MiB each, 256 MiB together by default: `--max-recording-mb`, `--max-recordings-mb`); save a copy through the page, which downloads it. After a daemon restart a recording that was running is listed as interrupted and can still be saved.
+- **Recording.** A recording runs on the daemon and continues without the page. Recordings are kept in the data directory (64 MiB each, 256 MiB together by default: `--max-recording-mb`, `--max-recordings-mb`; and recording stops when less than 64 MiB are free where they are kept: `--min-free-mb`); save a copy through the page, which downloads it. After a daemon restart a recording that was running is listed as interrupted and can still be saved.
 - **You close the tab.** Same: the session stays open on the daemon. Open the URL again and the page picks it up. Disconnect in the page to close it.
 - **The token.** It is the only credential: treat the URL like a password. It is created on the first start, kept in a file only the daemon's user can read, and stays the same across restarts. Replace it with `sunspec-explorerd token rotate`: the old URL stops working within a second, without a restart.
 - **Which devices.** By default the daemon connects only to private and link-local addresses (10/8, 172.16/12, 192.168/16, 169.254/16 and their IPv6 counterparts). Add others with `--allow-target <cidr>`, for example `--allow-target 127.0.0.0/8` for a device forwarded to the gateway itself.
+- **Serial devices (RS-485).** The daemon opens only the serial devices you name: start it with `--allow-serial '/dev/ttyUSB*'` (repeatable), then connect to `rtu:///dev/ttyUSB0` in the page and set baud rate, data bits, parity and stop bits there (default 9600 8N1). The path is on the gateway, not on your workstation. The daemon's user needs access to the device (on Debian: the `dialout` group). On a slow line, `--request-delay 50ms` puts a pause between the reads of two models.
+- **Modbus/TCP Security (TLS).** For `tcp+tls://host:port` devices, start the daemon with its identity: `--tls-cert`, `--tls-key` and `--tls-ca` (PEM files; the CA file may hold the device's own certificate). The page never handles key material.
 - **Read-only.** The daemon never writes to a device; see [`SECURITY.md`](../SECURITY.md).
 
 ## Where the daemon keeps its files
@@ -70,7 +72,7 @@ sudo -u sunspec-explorer sunspec-explorerd url --data-dir /var/lib/sunspec-explo
 Two things to know:
 
 - **Never add `PrivateTmp=yes` to the unit** if you use the default data directory: systemd deletes a private `/tmp` whenever the service stops, and the token and recordings with it.
-- **The startup line with the URL goes to the journal** (`journalctl -u sunspec-explorerd`). Whoever may read the journal can read the token. Restrict journal access accordingly, or rotate the token after the first start and use `sunspec-explorerd url` from then on.
+- **The URL is not in the journal.** The daemon prints the URL with its token at startup only when it writes to a terminal. As a service it writes one line that names the command instead; get the URL with `sunspec-explorerd url`, as above.
 
 ## Debian 11, 12 and 13
 
@@ -111,7 +113,7 @@ Open the printed URL in a browser. `make docker-run` does the build and the run 
 
   - On Linux, `--network host` gives the container the host's network (and loopback bind works again: add `--listen 127.0.0.1:8765` and drop `-p`).
 - **Serial ports** (when serial targets exist) need the device passed in: `--device /dev/ttyUSB0`.
-- The image holds the static binary and nothing else (distroless, no shell), and runs as a non-root user. `docker logs` shows the startup line with the URL: whoever may read the container's logs can read the token; rotate it with `docker exec explorer sunspec-explorerd token rotate`.
+- The image holds the static binary and nothing else (distroless, no shell), and runs as a non-root user. The token is not in `docker logs`: get the URL with `docker exec explorer sunspec-explorerd url`, and replace the token with `docker exec explorer sunspec-explorerd token rotate`.
 
 ## Binding to another address
 

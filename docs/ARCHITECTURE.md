@@ -1,6 +1,6 @@
 # Architecture
 
-Implements `REQUIREMENTS.md`. Facts about go-sunspec below were checked against the local checkout (go-sunspec `go 1.23`, go-modbus v1.4.2) on 2026-10-13; the module uses the released go-sunspec v0.5.1, go-modbus v1.4.2 and Wails v3.0.0-beta.29. Items marked **VERIFY** were not checkable from the connected folders.
+Implements `REQUIREMENTS.md`. Facts about go-sunspec below were checked against the local checkout (go-sunspec `go 1.23`, go-modbus v1.4.2) on 2026-10-13; the module uses the released go-sunspec v0.5.1, go-modbus v1.5.0 and Wails v3.0.0-beta.29. Items marked **VERIFY** were not checkable from the connected folders.
 
 ## 1. Principles
 
@@ -88,7 +88,7 @@ A session = target (URL, unit ID, register type, base addresses) + one open `*mo
 - A chain that became **shorter** does not produce `ErrModelChanged`: the read of a model that is gone fails with exception 2 (illegal data address), which `ReadModel` returns as a plain error. On that exception the engine reads the model's two header registers; when they are gone or differ, it treats the model as changed.
 - Concurrency: `Device` follows the go-modbus client's rules, hence the per-session queue.
 - No client-side write calls exist in go-sunspec non-test code (grep for `WriteRegister`, `WriteCoil`). Its `Server` type lives in the same root package as the client.
-- **Verified 2026-10-13 (go-modbus v1.4.2)**: there is no transport/PDU hook or middleware that can reject a request, and no dialer hook. The lowest usable point is `Config.Metrics`: the client calls `ClientMetrics.OnRequest(unitID, functionCode)` immediately before sending, before it takes any lock. `internal/readonly.Guard` panics there for anything but FC03/FC04 and `readonly.Do` turns the panic into an error, so the request never reaches the wire and the client stays usable (tested with a wire tap). A real allow-list option in go-modbus (`Config.AllowedFunctionCodes` or a request interceptor) would be cleaner; open question for the go-modbus maintainers.
+- **Read-only at the client** (go-modbus v1.5.0): every client the engine creates sets `Config.AllowedFunctionCodes` to FC03 and FC04 (`internal/readonly.FunctionCodes`). go-modbus checks the list in the one function every request passes through, before the transport: a refused request sends nothing, opens no connection and returns `modbus.ErrFunctionCodeNotAllowed`. `internal/readonly.Guard`, the client's metrics, counts allowed requests and refusals; tests assert that the refusal count stays zero and that a wire tap sees only FC03/FC04. History: go-modbus v1.4.2 had no such option, and until v0.0.1 the guard stopped requests by panicking in the metrics callback; the option was added to go-modbus for this project.
 
 ## 6. Polling
 
@@ -139,9 +139,9 @@ Recording (`.jsonl`, one JSON object per line):
 {"type":"footer","stopped_at":"...","samples":720,"failures":3,"reason":"user|limit|shutdown"}
 ```
 
-As implemented (`internal/engine/recording.go`, types in `internal/model`): the header also carries `name`, `device` and the full model list; a sample line is the poll sample as it is (`session_id`, `metadata: "compact"`, per-model status, stale flag and points); event kinds are `gap` (polling not running or stopped), `polling_started`, `reconnecting`, `connected` and `discovery_changed` (with the new `models`); the footer `reason` is `user`, `limit`, `session_closed`, `shutdown` or `error`. Files live in `<data-dir>/recordings`, mode 0600.
+As implemented (`internal/engine/recording.go`, types in `internal/model`): the header also carries `name`, `device` and the full model list; a sample line is the poll sample as it is (`session_id`, `metadata: "compact"`, per-model status, stale flag and points); event kinds are `gap` (polling not running or stopped), `polling_started`, `reconnecting`, `connected` and `discovery_changed` (with the new `models`); the footer `reason` is `user`, `limit` (size, total size or age), `disk_space` (the free-space floor), `session_closed`, `shutdown` or `error`. Files live in `<data-dir>/recordings`, mode 0600.
 
-Every line is one `write` call, unbuffered. A truncated last line (crash) is tolerated by readers. Rotation by size creates `<name>.000.jsonl`, `.001.jsonl`. A `<name>.meta.json` sidecar (state, counters, config; written atomically at start, every 30 samples and at stop) records `running|stopped|interrupted`. At start the engine marks every recording that still says `running` as `interrupted` and counts its samples again from the files. While a recording runs, each `sample` event carries its counters, so the user interface needs no timer. CSV (long) export columns: `captured_at, seq, model_index, model_id, group_path, point, value, scaled, unit, implemented, status`. Device-file export matches the `sunspecctl capture` format (see `sunspecctl` repo, `devicefile.go`; consider moving that code into go-sunspec so both can import it).
+Every line is one `write` call, unbuffered. A truncated last line (crash) is tolerated by readers. Rotation by size creates `<name>.000.jsonl`, `.001.jsonl`. A `<name>.meta.json` sidecar (state, counters, config; written atomically at start, every 30 samples and at stop) records `running|stopped|interrupted`. At start the engine marks every recording that still says `running` as `interrupted` and counts its samples again from the files. While a recording runs, each `sample` event carries its counters, so the user interface needs no timer. CSV (long) export columns: `captured_at, seq, model_index, model_id, group_path, point, value, scaled, unit, implemented, status` (`group_path` such as `module[2]` or `Crv[1]/Pt[3]`; `seq` empty for a single read; a model without schema gives one row per data register, a failed model one row with its status). Device-file export matches the `sunspecctl capture` format (`internal/engine/export.go`, a port of sunspecctl's `devicefile.go`; a model is written by point values only when they encode back to exactly the registers that were read, otherwise by its registers; moving that code into go-sunspec would let both import it). The snapshot's JSON Schema is `docs/schema/snapshot-1.schema.json`.
 
 ## 8. HTTP API v1 (daemon)
 
@@ -149,18 +149,20 @@ All `/api/v1` requests: `Authorization: Bearer <token>`, `Content-Type: applicat
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v1/health` | `{status, version, api_version, uptime_s, go_sunspec, registry_models}` |
+| `GET /api/v1/health` | `{status, version, api_version, uptime_s, go_sunspec, registry_models, time, features}`; `features` lists what the engine is set up for (`recording`, `serial`, `tls`), `time` lets the page notice a clock skew |
 | `POST /api/v1/sessions` | Open session (target config) -> `SessionInfo` with discovery result and probe attempts |
 | `GET /api/v1/sessions` / `GET /api/v1/sessions/{id}` | List / get |
 | `DELETE /api/v1/sessions/{id}` | Close |
 | `POST /api/v1/sessions/{id}/rediscover` | Re-run discovery |
 | `POST /api/v1/sessions/{id}/snapshot` | Single read (optional `model_indexes`) |
+| `POST /api/v1/sessions/{id}/export` | Read the device and render it: `{"format":"csv"}` or `{"format":"devicefile"}` -> `{name, mime, text}`. The client saves the text; it never names a file |
 | `PUT /api/v1/sessions/{id}/polling` / `DELETE ...` | Start (replace) / stop polling |
 | `GET /api/v1/sessions/{id}/state` | Last sample, counters, polling and recording state (used after reconnect) |
 | `GET /api/v1/events?since=<seq>` | SSE stream |
 | `POST /api/v1/sessions/{id}/recordings` | Start recording (name, rotation) |
 | `POST /api/v1/recordings/{rid}/stop` | Stop |
 | `GET /api/v1/recordings` | List (state `running|stopped|interrupted`) |
+| `GET /api/v1/recordings/{rid}/download?format=csv` | The recording converted to CSV as it is read (no `Range`) |
 | `GET /api/v1/recordings/{rid}/download` | Download of all files of the recording as one stream; `Range: bytes=N-` and `bytes=N-M` supported; works while running (up to the size at that moment) |
 | `DELETE /api/v1/recordings/{rid}` | Delete a recording that is not running |
 | `GET /api/v1/serial-ports` | Allowed serial devices on the daemon host |
@@ -174,7 +176,7 @@ SSE: `id:` = monotonically increasing `seq`; the daemon keeps a ring buffer (def
 
 Read-only, defense in depth:
 
-1. Allow-list FC03 and FC04 at the lowest hook go-modbus offers: `internal/readonly.Guard` on `Config.Metrics` (section 5).
+1. Allow-list FC03 and FC04 in the Modbus client itself: `Config.AllowedFunctionCodes` of go-modbus, set on every client (section 5).
 2. Lint (`golangci-lint` `forbidigo` or a small analyzer): ban `Write*`/FC05/06/15/16/21/22/23/08 helpers and any import of go-sunspec `Server`/go-modbus server types outside `_test.go`.
 3. Wire test: run every workflow against a recording TCP proxy in front of the fixture server and assert the set of function codes observed is a subset of {03, 04}.
 
@@ -184,7 +186,7 @@ Daemon:
 - Host check: a request must name a host the daemon answers to (`127.0.0.1`, `localhost`, `::1`; for a remote bind also the bind address and `--allow-host` names). The port is not compared, because the local end of an SSH forward may use another port. This is what stops DNS rebinding from a page in the user's browser.
 - When the tunnel drops, nothing changes on the daemon: sessions, polling and (M3) recordings continue. The page shows "connection lost", retries with backoff and resumes with `GET /api/v1/events?since=<last seq>`: the daemon replays what the page missed, or sends `resync` first when its buffer wrapped, and the page then re-reads `/state` and says that events were missed. A page that is opened or reloaded adopts the session that is still open on the daemon.
 - Bearer token: generated on the first start, written to a 0600 file (default `<data-dir>/token`, `--token-file` overrides), reused by later starts, compared in constant time. With the default temporary data directory a cleared temp dir means a new token. `sunspec-explorerd token rotate` replaces the file atomically (write to a temporary name, 0600, rename); the running daemon notices the change (it checks the file's modification time), switches to the new token and closes event streams opened with the old one. Host header check; no permissive CORS.
-- The token is never logged. It leaves the daemon in two ways only: the single startup line that prints the URL (R21), and `sunspec-explorerd url`.
+- The token is never logged. It leaves the daemon in two ways only: `sunspec-explorerd url`, and one startup line that is printed only when the daemon writes to a terminal. Under systemd or in a container the daemon's output is a journal or a log that others may read, so there the startup line only names the `url` command.
 - `sunspec-explorerd url` prints `http://<address>:<port>/#token=<token>` for the running daemon and, when the hostname is known, the matching `ssh -N -L <port>:127.0.0.1:<port> <user>@<hostname>`. It needs the address the daemon actually bound (`--listen` may say port 0): the daemon writes it at start to a 0600 state file next to the token file, and `url` reads both. It fails with a clear message when no daemon is running.
 - Web UI: the token reaches the page only in the URL fragment (never sent to the server, never in query strings, cookies or logs); the page keeps it in memory, strips it from the address bar and sends it as a header. Headers: CSP `default-src 'self'; connect-src 'self'` with no inline script, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `frame-ancestors 'none'`. `--no-ui` disables static serving.
 - Data directory: default `<tmp>/sunspec-explorer-<uid>` (`--data-dir` overrides). Created 0700; the daemon `lstat`s it and refuses a symlink, another owner or wider permissions (shared `/tmp` symlink attacks). Temporary by design: lost when the OS clears it (Debian 13's `/tmp` is tmpfs, RAM-backed), so defaults are small (R15) and the UI prompts to save a copy. The systemd unit must not set `PrivateTmp=yes`: systemd deletes a private `/tmp` when the service stops, which would destroy recordings on every restart.

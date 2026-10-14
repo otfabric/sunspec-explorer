@@ -8,10 +8,13 @@ import { loadTheme, persistTheme } from '../../app/platform/themeStorage';
 import { ServiceError, toServiceError, type ErrorCode, type Service } from '../../app/service/service';
 import type {
   ExplorerEvent,
+  ExportFile,
+  ExportFormat,
   Health,
   PollConfig,
   ProbeAttempt,
   RecordingConfig,
+  RecordingFormat,
   RecordingInfo,
   SerialPort,
   SessionInfo,
@@ -71,7 +74,8 @@ export class WailsService implements Service {
   recordings = () => call<RecordingInfo[]>('Recordings');
   deleteRecording = (recId: string) => call<void>('DeleteRecording', recId);
   // The Go side shows the native Save dialog and copies the file itself.
-  saveRecording = async (recId: string) => (await call<string>('SaveRecording', recId)) !== '';
+  saveRecording = async (recId: string, format: RecordingFormat = 'jsonl') => (await call<string>('SaveRecording', recId, format)) !== '';
+  exportSession = (id: string, format: ExportFormat) => call<ExportFile>('ExportSession', id, format);
   serialPorts = () => call<SerialPort[]>('SerialPorts');
 
   // The Go side forwards every engine event to the window as it happens, so
@@ -102,5 +106,9 @@ export class WailsPlatform implements Platform {
 
   copyText(text: string): Promise<void> {
     return Clipboard.SetText(text);
+  }
+
+  reload(): void {
+    window.location.reload();
   }
 }

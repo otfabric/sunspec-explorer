@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { ConfirmDialog } from './components/ConfirmDialog';
 import { ConnectError } from './components/ConnectError';
 import { ConnectionBar } from './components/ConnectionBar';
+import { IncompatiblePanel, SkewWarning, UpdatedBanner } from './components/EngineNotices';
+import { ExportDialog, type ExportChoice } from './components/ExportDialog';
 import { Header } from './components/Header';
 import { LinkBanner, NoToken } from './components/LinkStatus';
 import { ModelSummary } from './components/ModelSummary';
@@ -20,6 +21,7 @@ import { ErrorIcon } from './icons';
 import type { Platform } from './platform/platform';
 import type { Service } from './service/service';
 import type { ModelResult } from './service/types';
+import { isCompatible, SKEW_LIMIT_MS } from './state/engine';
 import { flattenModels, type PointRow } from './state/rows';
 import { useExplorer } from './state/useExplorer';
 import { useTheme } from './state/useTheme';
@@ -41,7 +43,7 @@ export function App({ service, platform }: AppProps) {
   const [showRaw, setShowRaw] = useState(true);
   const [showDocAddress, setShowDocAddress] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [confirmingExport, setConfirmingExport] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [namingRecording, setNamingRecording] = useState(false);
   const [showingRecordings, setShowingRecordings] = useState(false);
 
@@ -53,16 +55,25 @@ export function App({ service, platform }: AppProps) {
   }, [results, selected, query]);
   const activeRow = rows.find((row): row is PointRow => row.kind === 'point' && row.key === activeKey) ?? null;
   const pointCount = useMemo(() => rows.filter((row) => row.kind === 'point').length, [rows]);
+  // A page left over from a daemon with another API must not drive this one.
+  const incompatible = state.health !== null && !isCompatible(state.health.api_version);
   // Without the engine nothing can be read or changed; what is on screen stays.
-  const offline = state.link !== 'up';
+  const offline = state.link !== 'up' || incompatible;
   const showRegisters = selectedResult !== undefined && selectedResult.group === null && selectedResult.raw_registers !== null;
 
-  async function exportSnapshot() {
-    setConfirmingExport(false);
+  async function exportAs(choice: ExportChoice) {
+    setExporting(false);
     try {
-      const snapshot = await explorer.exportSnapshot();
-      if (snapshot) {
-        await platform.saveFile(exportName(snapshot.captured_at), 'application/json', JSON.stringify(snapshot, null, 2));
+      if (choice === 'snapshot') {
+        const snapshot = await explorer.exportSnapshot();
+        if (snapshot) {
+          await platform.saveFile(exportName(snapshot.captured_at), 'application/json', JSON.stringify(snapshot, null, 2));
+        }
+        return;
+      }
+      const file = await explorer.exportSession(choice);
+      if (file) {
+        await platform.saveFile(file.name, file.mime, file.text);
       }
     } catch (err) {
       explorer.report(err);
@@ -76,10 +87,15 @@ export function App({ service, platform }: AppProps) {
         connected={session !== null}
         connecting={state.connecting}
         offline={offline}
+        features={state.health?.features ?? null}
+        serialPorts={state.serialPorts}
+        engineIsRemote={platform.mode.kind === 'browser'}
         onConnect={explorer.connect}
         onDisconnect={explorer.disconnect}
       />
       <LinkBanner link={state.link} restored={state.restored} recording={recordingRuns} onDismiss={explorer.dismissRestored} />
+      {state.updatedTo !== null && !incompatible && <UpdatedBanner version={state.updatedTo} onReload={() => platform.reload()} />}
+      {Math.abs(state.skewMs) > SKEW_LIMIT_MS && !state.skewDismissed && <SkewWarning skewMs={state.skewMs} onDismiss={explorer.dismissSkew} />}
       {state.notice && (
         <div className="flex shrink-0 items-center gap-2 border-b border-danger px-4 py-2 text-danger" role="alert">
           <ErrorIcon />
@@ -92,7 +108,7 @@ export function App({ service, platform }: AppProps) {
           recording={recording}
           polling={state.polling}
           offline={offline}
-          onSave={() => explorer.saveRecording(recording.id)}
+          onSave={(format) => explorer.saveRecording(recording.id, format)}
           onDismiss={explorer.dismissRecording}
         />
       )}
@@ -100,6 +116,10 @@ export function App({ service, platform }: AppProps) {
         {state.link === 'unauthorized' ? (
           <main className="min-w-0 flex-1 overflow-auto">
             <NoToken />
+          </main>
+        ) : incompatible ? (
+          <main className="min-w-0 flex-1 overflow-auto">
+            <IncompatiblePanel apiVersion={state.health?.api_version ?? ''} onReload={() => platform.reload()} />
           </main>
         ) : session ? (
           <>
@@ -122,7 +142,7 @@ export function App({ service, platform }: AppProps) {
                 onReadOnce={explorer.readOnce}
                 onStartPolling={explorer.startPolling}
                 onStopPolling={explorer.stopPolling}
-                onExport={() => setConfirmingExport(true)}
+                onExport={() => setExporting(true)}
                 recording={recordingRuns}
                 onRecord={() => setNamingRecording(true)}
                 onStopRecording={explorer.stopRecording}
@@ -184,13 +204,7 @@ export function App({ service, platform }: AppProps) {
           onClose={() => setShowingRecordings(false)}
         />
       )}
-      {confirmingExport && (
-        <ConfirmDialog title="Export snapshot" confirmLabel="Export" onConfirm={exportSnapshot} onCancel={() => setConfirmingExport(false)}>
-          <p>
-            The export contains the device serial number and network addresses. Share the file only with people who may know them.
-          </p>
-        </ConfirmDialog>
-      )}
+      {exporting && <ExportDialog onExport={exportAs} onCancel={() => setExporting(false)} />}
     </div>
   );
 }

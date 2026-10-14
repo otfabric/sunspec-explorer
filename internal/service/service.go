@@ -53,6 +53,12 @@ type Service interface {
 	// over all its files. A running recording is read up to its size at the
 	// time of the call; SizeBytes of the returned info is that size.
 	OpenRecording(ctx context.Context, recID string, offset int64) (io.ReadCloser, model.RecordingInfo, error)
+	// OpenRecordingCSV opens a recording converted to CSV in long format, one
+	// row per point per sample.
+	OpenRecordingCSV(ctx context.Context, recID string) (io.ReadCloser, model.RecordingInfo, error)
+	// ExportSession reads every model of a session once and renders the
+	// result in the given format (model.ExportCSV, model.ExportDeviceFile).
+	ExportSession(ctx context.Context, id string, format string) (model.ExportFile, error)
 	// DeleteRecording removes a recording that is not running.
 	DeleteRecording(ctx context.Context, recID string) error
 	// SerialPorts lists the serial devices the engine may open.

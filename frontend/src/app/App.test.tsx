@@ -1,9 +1,11 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { Platform, Theme } from './platform/platform';
 import { MockService } from './service/mock';
+import type { LinkStatus } from './service/service';
+import type { ExplorerEvent, Health } from './service/types';
 
 const fakePlatform = (theme: Theme): Platform => ({
   mode: { kind: 'browser' },
@@ -13,6 +15,7 @@ const fakePlatform = (theme: Theme): Platform => ({
   persistTheme: vi.fn(),
   loadTheme: () => theme,
   copyText: vi.fn(async () => {}),
+  reload: vi.fn(),
 });
 
 describe.each<Theme>(['dark', 'light'])('App against the mock device, %s theme', (theme) => {
@@ -94,15 +97,41 @@ describe.each<Theme>(['dark', 'light'])('App against the mock device, %s theme',
     await user.type(await screen.findByRole('searchbox'), 'heat sink');
     expect(await screen.findByText('1 point')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Export snapshot' }));
+    await user.click(screen.getByRole('button', { name: 'Export…' }));
     expect(platform.saveFile).not.toHaveBeenCalled();
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Export' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Export' }));
+    expect(dialog.getByText(/serial number and network addresses/)).toBeInTheDocument();
+    await user.click(dialog.getByRole('button', { name: 'Snapshot (JSON)' }));
     await vi.waitFor(() => expect(platform.saveFile).toHaveBeenCalledOnce());
     const [name, mime, text] = vi.mocked(platform.saveFile).mock.calls[0] as [string, string, string];
     expect(name).toMatch(/^sunspec-snapshot-\d{8}T\d{6}Z\.json$/);
     expect(mime).toBe('application/json');
     expect(JSON.parse(text)).toMatchObject({ schema: 'otfabric.sunspec-explorer.snapshot/1', metadata: 'full' });
     expect(JSON.parse(text).models[3].raw_registers).toHaveLength(12);
+  });
+
+  it('exports the points as CSV and the device as a sunspecctl device file', async () => {
+    const user = userEvent.setup();
+    const platform = fakePlatform(theme);
+    render(<App service={new MockService()} platform={platform} />);
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Export…' }));
+    await user.click(screen.getByRole('button', { name: 'Points (CSV)' }));
+    await vi.waitFor(() => expect(platform.saveFile).toHaveBeenCalledTimes(1));
+    const [csvName, csvMime, csv] = vi.mocked(platform.saveFile).mock.calls[0] as [string, string, string];
+    expect(csvName).toMatch(/\.csv$/);
+    expect(csvMime).toBe('text/csv');
+    expect(csv.split('\n')[0]).toBe('captured_at,seq,model_index,model_id,group_path,point,value,scaled,unit,implemented,status');
+    expect(csv).toMatch(/,2,160,mppt\/module\[2\],DCV,\d+,[\d.]+,V,true,ok\n/);
+
+    await user.click(screen.getByRole('button', { name: 'Export…' }));
+    await user.click(screen.getByRole('button', { name: 'Device file (sunspecctl)' }));
+    await vi.waitFor(() => expect(platform.saveFile).toHaveBeenCalledTimes(2));
+    const device = JSON.parse((vi.mocked(platform.saveFile).mock.calls[1] as [string, string, string])[2]);
+    expect(device).toMatchObject({ unit_id: 1, base_address: 40000 });
+    expect(device.models.map((model: { id: number }) => model.id)).toEqual([1, 103, 160, 64900]);
+    expect(device.models[3].registers).toHaveLength(12);
   });
 
   it('picks up a session that is already open and polling on the engine', async () => {
@@ -152,7 +181,7 @@ describe.each<Theme>(['dark', 'light'])('App against the mock device, %s theme',
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     expect(await screen.findByText('Recording bench-test stopped: stopped by you')).toBeInTheDocument();
     expect(screen.getByText(/will be lost when the system clears its temp/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Save a copy' }));
+    await user.click(screen.getByRole('button', { name: 'Save a copy of bench-test as JSON Lines' }));
     await vi.waitFor(() => expect(platform.saveBlob).toHaveBeenCalledOnce());
     const [name, blob] = vi.mocked(platform.saveBlob).mock.calls[0] as [string, Blob];
     expect(name).toBe('bench-test.jsonl');
@@ -161,6 +190,12 @@ describe.each<Theme>(['dark', 'light'])('App against the mock device, %s theme',
     await user.click(screen.getByRole('button', { name: 'Recordings' }));
     const list = within(screen.getByRole('dialog', { name: 'Recordings' }));
     const row = within(await list.findByRole('row', { name: /bench-test/ }));
+    await user.click(row.getByRole('button', { name: 'Save a copy of bench-test as CSV' }));
+    await vi.waitFor(() => expect(platform.saveBlob).toHaveBeenCalledTimes(2));
+    const [csvName, csv] = vi.mocked(platform.saveBlob).mock.calls[1] as [string, Blob];
+    expect(csvName).toBe('bench-test.csv');
+    expect(csv.type).toBe('text/csv');
+    expect((await csv.text()).split('\n')[0]).toMatch(/^captured_at,seq,model_index/);
     expect(row.getByText('stopped')).toBeInTheDocument();
     await user.click(row.getByRole('button', { name: 'Delete bench-test' }));
     await user.click(within(screen.getByRole('dialog', { name: 'Delete recording' })).getByRole('button', { name: 'Delete' }));
@@ -168,3 +203,137 @@ describe.each<Theme>(['dark', 'light'])('App against the mock device, %s theme',
     expect(screen.queryByText(/Recording bench-test stopped/)).not.toBeInTheDocument();
   }, 15_000);
 });
+
+/** A mock whose health answer and link the test controls. */
+class EngineDouble extends MockService {
+  answer: Partial<Health> = {};
+  link: (status: LinkStatus) => void = () => {};
+
+  override async health(): Promise<Health> {
+    return { ...(await super.health()), ...this.answer };
+  }
+
+  override subscribe(sinceSeq: number, onEvent: (event: ExplorerEvent) => void, onLink?: (status: LinkStatus) => void): () => void {
+    this.link = onLink ?? this.link;
+    return super.subscribe(sinceSeq, onEvent);
+  }
+}
+
+describe('engine checks', () => {
+  it('blocks the page when the engine speaks another API major version', async () => {
+    const user = userEvent.setup();
+    const platform = fakePlatform('dark');
+    const service = new EngineDouble();
+    service.answer = { api_version: '2.3' };
+    render(<App service={service} platform={platform} />);
+
+    expect(await screen.findByRole('heading', { name: 'This page does not match the daemon' })).toBeInTheDocument();
+    expect(screen.getByText(/speaks API 2\.3; this page expects 1\.x/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(platform.reload).toHaveBeenCalledOnce();
+  });
+
+  it('offers a reload when the engine was updated while the page stayed open', async () => {
+    const user = userEvent.setup();
+    const platform = fakePlatform('dark');
+    const service = new EngineDouble();
+    service.answer = { version: '0.0.2' };
+    render(<App service={service} platform={platform} />);
+    expect(await screen.findByText('engine 0.0.2')).toBeInTheDocument();
+    expect(screen.queryByText(/was updated/)).not.toBeInTheDocument();
+
+    service.answer = { version: '0.0.3' };
+    act(() => service.link('down'));
+    expect(screen.getByText(/Connection to the daemon lost/)).toBeInTheDocument();
+    act(() => service.link('up'));
+
+    expect(await screen.findByText(/The daemon was updated to 0\.0\.3\. Reload to get the matching page\./)).toBeInTheDocument();
+    expect(screen.getByText(/open the URL with the token again/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(platform.reload).toHaveBeenCalledOnce();
+  });
+
+  it('warns about a clock that is off by more than five seconds, until dismissed', async () => {
+    const user = userEvent.setup();
+    const service = new EngineDouble();
+    service.answer = { time: new Date(Date.now() - 42_000).toISOString() };
+    render(<App service={service} platform={fakePlatform('dark')} />);
+
+    const warning = await screen.findByText(/The daemon's clock is 42 s behind this computer\. Sample times are the daemon's\./);
+    await user.click(within(warning.parentElement as HTMLElement).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/clock is/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing about a clock that is close enough', async () => {
+    const service = new EngineDouble();
+    service.answer = { time: new Date(Date.now() + 3_000).toISOString() };
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    expect(await screen.findByText(/^engine /)).toBeInTheDocument();
+    expect(screen.queryByText(/clock is/)).not.toBeInTheDocument();
+  });
+});
+
+describe('target kinds', () => {
+  async function typeUrl(user: ReturnType<typeof userEvent.setup>, url: string) {
+    const field = screen.getByLabelText('Device URL');
+    await user.clear(field);
+    await user.type(field, url);
+  }
+
+  it('offers the serial settings and the allowed ports for an rtu:// target', async () => {
+    const user = userEvent.setup();
+    const service = new MockService();
+    const open = vi.spyOn(service, 'openSession');
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    await screen.findByText(/^engine /);
+    expect(screen.queryByLabelText('Baud')).not.toBeInTheDocument();
+
+    await typeUrl(user, 'rtu://');
+    expect(screen.getByText(/Serial paths are on the machine the engine runs on \(the gateway/)).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText('Serial port'), '/dev/ttyUSB1');
+    expect(screen.getByLabelText('Device URL')).toHaveValue('rtu:///dev/ttyUSB1');
+    await user.clear(screen.getByLabelText('Baud'));
+    await user.type(screen.getByLabelText('Baud'), '19200');
+    await user.selectOptions(screen.getByLabelText('Parity'), 'even');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'rtu:///dev/ttyUSB1', serial: { baud: 19200, data_bits: 8, parity: 'even', stop_bits: 1 } }),
+    );
+    expect(await screen.findByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
+  });
+
+  it('sends no serial settings for a network target', async () => {
+    const user = userEvent.setup();
+    const service = new MockService();
+    const open = vi.spyOn(service, 'openSession');
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    await typeUrl(user, 'tcp+tls://10.0.0.5:802');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(open.mock.calls[0]?.[0]).toMatchObject({ url: 'tcp+tls://10.0.0.5:802', serial: undefined });
+  });
+
+  it('explains why a serial or TLS target cannot work instead of letting the connect fail', async () => {
+    const user = userEvent.setup();
+    const service = new EngineDouble();
+    service.answer = { features: ['recording'] };
+    render(<App service={service} platform={fakePlatform('dark')} />);
+    await screen.findByText(/^engine /);
+
+    await typeUrl(user, 'rtu:///dev/ttyUSB0');
+    expect(screen.getByRole('alert')).toHaveTextContent('the daemon was not started with --allow-serial');
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled();
+    expect(screen.queryByLabelText('Serial port')).not.toBeInTheDocument();
+
+    await typeUrl(user, 'tcp+tls://10.0.0.5:802');
+    expect(screen.getByRole('alert')).toHaveTextContent('--tls-cert, --tls-key and --tls-ca');
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled();
+
+    await typeUrl(user, 'tcp://10.0.0.5:502');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
+  });
+});
+

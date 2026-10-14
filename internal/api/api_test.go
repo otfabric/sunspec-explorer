@@ -298,6 +298,23 @@ func TestDownloadRanges(t *testing.T) {
 			t.Errorf("Range %q = %d", bad, status)
 		}
 	}
+	// The same recording converted to CSV; that form has no ranges.
+	status, header, table := d.request(t, "GET", "/api/v1/recordings/dl/download?format=csv", testToken, "", nil)
+	if status != http.StatusOK || !strings.HasPrefix(header.Get("Content-Type"), "text/csv") ||
+		header.Get("Content-Disposition") != `attachment; filename="dl.csv"` || !strings.HasPrefix(table, csvColumns+"\n") {
+		t.Errorf("CSV download = %d %v %.80s", status, header, table)
+	}
+	if status, _, same := d.request(t, "GET", "/api/v1/recordings/dl/download?format=jsonl", testToken, "", nil); status != http.StatusOK || same != whole {
+		t.Errorf("format=jsonl = %d, %d bytes", status, len(same))
+	}
+	if status, _, _ := d.request(t, "GET", "/api/v1/recordings/dl/download?format=csv", testToken, "", func(r *http.Request) {
+		r.Header.Set("Range", "bytes=0-10")
+	}); status != http.StatusBadRequest {
+		t.Errorf("Range on CSV = %d", status)
+	}
+	if status, _, _ := d.request(t, "GET", "/api/v1/recordings/dl/download?format=xlsx", testToken, "", nil); status != http.StatusBadRequest {
+		t.Errorf("unknown format = %d", status)
+	}
 	// No token, no recording.
 	if status, _, _ := d.request(t, "GET", "/api/v1/recordings/dl/download", "", "", nil); status != http.StatusUnauthorized {
 		t.Errorf("download without token = %d", status)

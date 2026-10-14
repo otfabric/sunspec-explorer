@@ -74,13 +74,55 @@ const (
 
 // Health describes a running engine.
 type Health struct {
-	Status         string    `json:"status"`
-	Version        string    `json:"version"`
-	APIVersion     string    `json:"api_version"`
-	UptimeS        int64     `json:"uptime_s"`
-	GoSunspec      string    `json:"go_sunspec"`
-	RegistryModels int       `json:"registry_models"`
-	Time           time.Time `json:"time"`
+	Status         string `json:"status"`
+	Version        string `json:"version"`
+	APIVersion     string `json:"api_version"`
+	UptimeS        int64  `json:"uptime_s"`
+	GoSunspec      string `json:"go_sunspec"`
+	RegistryModels int    `json:"registry_models"`
+	// Time is the engine's clock, for clients to notice a skew.
+	Time time.Time `json:"time"`
+	// Features lists what this engine is set up for beyond the basics:
+	// "recording", "serial", "tls".
+	Features []string `json:"features"`
+}
+
+// Features of an engine.
+const (
+	FeatureRecording = "recording"
+	FeatureSerial    = "serial"
+	FeatureTLS       = "tls"
+)
+
+// Parity of a serial line.
+const (
+	ParityNone = "none"
+	ParityEven = "even"
+	ParityOdd  = "odd"
+)
+
+// SerialConfig holds the settings of a serial line (rtu:// targets). Zero
+// values select 9600 baud, 8 data bits, no parity, 1 stop bit.
+type SerialConfig struct {
+	Baud     int    `json:"baud,omitempty"`
+	DataBits int    `json:"data_bits,omitempty"`
+	Parity   string `json:"parity,omitempty"`
+	StopBits int    `json:"stop_bits,omitempty"`
+}
+
+// Export formats of a session.
+const (
+	// ExportCSV is one row per point (long format).
+	ExportCSV = "csv"
+	// ExportDeviceFile is a device file for "sunspecctl serve".
+	ExportDeviceFile = "devicefile"
+)
+
+// ExportFile is a file rendered by the engine for the client to save.
+type ExportFile struct {
+	Name string `json:"name"`
+	Mime string `json:"mime"`
+	Text string `json:"text"`
 }
 
 // AppInfo identifies the application that wrote a file.
@@ -97,8 +139,9 @@ type LibInfo struct {
 
 // TargetConfig is what a client sends to open a session.
 type TargetConfig struct {
-	// URL is the device URL: tcp://host:port or rtuovertcp://host:port. It
-	// must not contain credentials.
+	// URL is the device URL: tcp://host:port, rtuovertcp://host:port,
+	// tcp+tls://host:port or rtu://<serial device>. It must not contain
+	// credentials.
 	URL string `json:"url"`
 	// UnitID is the Modbus unit ID. Zero selects 1.
 	UnitID uint8 `json:"unit_id"`
@@ -113,6 +156,8 @@ type TargetConfig struct {
 	// MaxModels caps the number of models read from the chain. Zero selects
 	// the go-sunspec default.
 	MaxModels int `json:"max_models,omitempty"`
+	// Serial holds the line settings of an rtu:// target.
+	Serial *SerialConfig `json:"serial,omitempty"`
 }
 
 // Target describes the device of an open session.
@@ -340,8 +385,10 @@ type RecordingConfig struct {
 
 // Reasons a recording stopped.
 const (
-	StopUser          = "user"
-	StopLimit         = "limit"
+	StopUser  = "user"
+	StopLimit = "limit"
+	// StopDiskSpace means the file system of the recordings ran low.
+	StopDiskSpace     = "disk_space"
 	StopSessionClosed = "session_closed"
 	StopShutdown      = "shutdown"
 	StopError         = "error"

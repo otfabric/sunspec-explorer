@@ -1,11 +1,13 @@
 import { CheckIcon, RecordIcon, WarningIcon } from '../icons';
-import type { PollState, RecordingInfo } from '../service/types';
+import type { PollState, RecordingFormat, RecordingInfo } from '../service/types';
 import { formatBytes, formatElapsed } from '../state/format';
+import { SaveCopy } from './SaveCopy';
 import { Button } from './ui';
 
 const STOP_REASON: Record<NonNullable<RecordingInfo['stop_reason']>, string> = {
   user: 'stopped by you',
-  limit: 'size limit reached',
+  limit: 'a size or time limit was reached',
+  disk_space: 'the disk is almost full',
   session_closed: 'the session was closed',
   shutdown: 'the engine shut down',
   error: 'writing failed',
@@ -36,7 +38,7 @@ interface RecordingBarProps {
   recording: RecordingInfo;
   polling: PollState;
   offline: boolean;
-  onSave: () => void;
+  onSave: (format: RecordingFormat) => void;
   onDismiss: () => void;
 }
 
@@ -84,10 +86,8 @@ export function RecordingBar({ recording, polling, offline, onSave, onDismiss }:
           Recording {recording.name} stopped: {stopReason(recording)}
         </span>
         <Counters recording={recording} until={recording.stopped_at ?? recording.started_at} />
-        <span className="ml-auto flex gap-2">
-          <Button variant="primary" onClick={onSave} disabled={offline}>
-            Save a copy
-          </Button>
+        <span className="ml-auto flex items-center gap-2">
+          <SaveCopy recording={recording} disabled={offline} onSave={onSave} />
           <Button onClick={onDismiss}>Dismiss</Button>
         </span>
       </div>

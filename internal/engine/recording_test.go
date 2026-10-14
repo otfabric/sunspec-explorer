@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -461,6 +462,97 @@ func TestRecordingLimits(t *testing.T) {
 	})
 	if ev.Recording.StopReason != model.StopLimit || ev.Recording.Samples != 1 {
 		t.Errorf("event = %+v", ev.Recording)
+	}
+}
+
+// R15: recording leaves a floor of free space alone: it does not start below
+// it, and a running recording stops when the disk gets there.
+func TestRecordingFreeSpaceFloor(t *testing.T) {
+	d := newSim(t, stdModels()[:2]...)
+	e := recEngine(t, t.TempDir(), RecordingLimits{MinFreeBytes: 10 << 20})
+	ch := events(t, e)
+	info := mustOpen(t, e, d)
+
+	var free atomic.Int64
+	known := atomic.Bool{}
+	known.Store(true)
+	var asked atomic.Value
+	e.recs.free = func(dir string) (int64, bool) {
+		asked.Store(dir)
+		return free.Load(), known.Load()
+	}
+
+	// Too little room: nothing starts, and the message says where and how
+	// much.
+	free.Store(4 << 20)
+	_, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "full"})
+	if service.CodeOf(err) != service.CodeLimitExceeded || !strings.Contains(err.Error(), "4.0 MiB") ||
+		!strings.Contains(err.Error(), "10.0 MiB") || !strings.Contains(err.Error(), e.recs.location) {
+		t.Fatalf("start on a full disk = %v", err)
+	}
+	if asked.Load() != e.recs.dir {
+		t.Errorf("free space asked for %v, want the recordings directory", asked.Load())
+	}
+	if list, _ := e.Recordings(ctx); len(list) != 0 {
+		t.Errorf("a refused recording left something: %+v", list)
+	}
+
+	// Room enough: it runs, until the disk fills up.
+	free.Store(500 << 20)
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "run"}); err != nil {
+		t.Fatalf("StartRecording: %v", err)
+	}
+	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent(t, ch, "2 recorded samples", recordingSamples(2))
+	free.Store(10<<20 - 1)
+	ev := waitEvent(t, ch, "stopped for disk space", func(ev model.Event) bool {
+		return ev.Kind == model.EventRecordingStatus && ev.Recording.State == model.RecordingStopped
+	})
+	if ev.Recording.StopReason != model.StopDiskSpace || ev.Recording.Samples < 3 {
+		t.Errorf("event = %+v", ev.Recording)
+	}
+	_, lines := readRecording(t, e, "run")
+	if last := lines[len(lines)-1]; last.Type != model.LineFooter || last.Reason != model.StopDiskSpace {
+		t.Errorf("last line = %+v", last)
+	}
+	// Polling goes on; only the recording ended.
+	if st, _ := e.State(ctx, info.ID); st.Recording != nil || !st.Polling.Active {
+		t.Errorf("state = %+v", st)
+	}
+
+	// Exactly at the floor is enough; a file system that does not tell is
+	// not treated as full.
+	free.Store(10 << 20)
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "edge"}); err != nil {
+		t.Errorf("start at the floor = %v", err)
+	}
+	if _, err := e.StopRecording(ctx, "edge"); err != nil {
+		t.Fatal(err)
+	}
+	free.Store(0)
+	known.Store(false)
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "unknown"}); err != nil {
+		t.Errorf("start on a file system without figures = %v", err)
+	}
+
+	// Switched off, and the default.
+	off := recEngine(t, t.TempDir(), RecordingLimits{MinFreeBytes: -1})
+	off.recs.free = func(string) (int64, bool) { return 0, true }
+	if _, low := off.recs.lowOnSpace(); low {
+		t.Error("the check is off and still reports low space")
+	}
+	def := recEngine(t, t.TempDir(), RecordingLimits{})
+	if def.recs.limits.MinFreeBytes != DefaultMinFreeBytes {
+		t.Errorf("default floor = %d", def.recs.limits.MinFreeBytes)
+	}
+	// The real figure for a real directory.
+	if free, ok := freeBytes(t.TempDir()); !ok || free <= 0 {
+		t.Errorf("freeBytes = %d, %v", free, ok)
+	}
+	if _, ok := freeBytes(filepath.Join(t.TempDir(), "missing")); ok {
+		t.Error("free space of a missing directory")
 	}
 }
 

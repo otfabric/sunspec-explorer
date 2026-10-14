@@ -25,7 +25,7 @@ import (
 	"github.com/otfabric/sunspec-explorer/internal/gui"
 )
 
-const appTitle = "OT Fabric SunSpec Explorer"
+const appTitle = "SunSpec Explorer"
 
 // appIcon is the SunSpec icon of the OT Fabric website (docs/BRANDING.md,
 // section 4): each OT Fabric GUI carries the icon of its protocol. It is the
@@ -48,6 +48,9 @@ func run(args []string) error {
 	debug := flags.Bool("debug", false, "log at debug level")
 	dataDir := flags.String("data-dir", daemon.DefaultDataDir(),
 		"directory for recordings; the default is temporary storage")
+	tlsCert := flags.String("tls-cert", "", "certificate (PEM) presented to tcp+tls:// devices")
+	tlsKey := flags.String("tls-key", "", "private key (PEM) of --tls-cert")
+	tlsCA := flags.String("tls-ca", "", "CA or device certificates (PEM) a tcp+tls:// device must present")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -69,7 +72,16 @@ func run(args []string) error {
 
 	// Without a usable data directory the application still explores; it
 	// only cannot record.
-	opts := engine.Options{Logger: log}
+	// The desktop application runs as its user and may open any serial
+	// device that user may.
+	opts := engine.Options{Logger: log, SerialPorts: daemon.LocalSerialPorts}
+	if *tlsCert != "" || *tlsKey != "" || *tlsCA != "" {
+		tlsConfig, err := engine.LoadTLS(*tlsCert, *tlsKey, *tlsCA)
+		if err != nil {
+			return err
+		}
+		opts.TLS = tlsConfig
+	}
 	if err := daemon.EnsureDataDir(*dataDir); err != nil {
 		log.Warn("recording is not available", "error", err)
 	} else {

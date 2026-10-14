@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { CheckIcon, RecordIcon, WarningIcon } from '../icons';
-import type { RecordingInfo } from '../service/types';
+import type { RecordingFormat, RecordingInfo } from '../service/types';
 import { formatBytes } from '../state/format';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Dialog } from './Dialog';
 import { stopReason, TEMPORARY_STORAGE } from './RecordingBar';
+import { SaveCopy } from './SaveCopy';
 import { Button } from './ui';
 
 const INTERRUPTED = 'The engine stopped unexpectedly; the file is intact up to the last complete line.';
@@ -39,7 +40,7 @@ interface RecordingsDialogProps {
   recordings: RecordingInfo[] | null;
   offline: boolean;
   onRefresh: () => void;
-  onSave: (id: string) => void;
+  onSave: (id: string, format: RecordingFormat) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
 }
@@ -100,10 +101,8 @@ export function RecordingsDialog({ recordings, offline, onRefresh, onSave, onDel
                   <td className={CELL}>{recording.failures}</td>
                   <td className={CELL}>{formatBytes(recording.size_bytes)}</td>
                   <td className="py-1.5">
-                    <span className="flex gap-2 font-sans">
-                      <Button onClick={() => onSave(recording.id)} disabled={offline} aria-label={`Save a copy of ${recording.name}`}>
-                        Save a copy
-                      </Button>
+                    <span className="flex items-center gap-2 font-sans">
+                      <SaveCopy recording={recording} disabled={offline} onSave={(format) => onSave(recording.id, format)} />
                       <Button
                         onClick={() => setDeleting(recording)}
                         disabled={offline || recording.state === 'running'}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { group, model, point } from '../../test/fixtures';
-import type { ExplorerEvent, ModelResult, RecordingInfo, Sample, SessionInfo, Snapshot } from '../service/types';
+import type { ExplorerEvent, Health, ModelResult, RecordingInfo, Sample, SessionInfo, Snapshot } from '../service/types';
 import { initialState, reduce, type ExplorerState } from './store';
 
 const session: SessionInfo = {
@@ -215,5 +215,34 @@ describe('recording', () => {
     expect(attached.recording?.samples).toBe(7);
     const later = reduce(attached, { type: 'state', state: { session, polling, last_sample: null, recording: null } });
     expect(later.recording).toBeNull();
+  });
+});
+
+describe('engine health', () => {
+  const health = (extra: Partial<Health> = {}): Health => ({
+    status: 'ok',
+    version: '0.0.2',
+    api_version: '1.1',
+    uptime_s: 1,
+    go_sunspec: 'v0.5.0',
+    registry_models: 100,
+    time: '2026-10-14T10:00:00Z',
+    features: ['recording'],
+    ...extra,
+  });
+
+  it('remembers the first versions and reports a later change', () => {
+    const first = reduce(initialState, { type: 'health', health: health(), skewMs: 12 });
+    expect(first).toMatchObject({ baseline: { version: '0.0.2', api_version: '1.1' }, updatedTo: null, skewMs: 12 });
+    expect(reduce(first, { type: 'health', health: health({ uptime_s: 99 }), skewMs: -8000 })).toMatchObject({ updatedTo: null, skewMs: -8000 });
+    expect(reduce(first, { type: 'health', health: health({ version: '0.0.3' }), skewMs: 0 }).updatedTo).toBe('0.0.3');
+    expect(reduce(first, { type: 'health', health: health({ api_version: '1.2' }), skewMs: 0 }).updatedTo).toBe('0.0.2');
+  });
+
+  it('keeps what is known about the engine across a disconnect', () => {
+    let state = reduce(connected(), { type: 'health', health: health(), skewMs: 9000 });
+    state = reduce(state, { type: 'serialPorts', ports: [{ path: '/dev/ttyUSB0' }] });
+    state = reduce(reduce(state, { type: 'dismissSkew' }), { type: 'disconnected' });
+    expect(state).toMatchObject({ skewMs: 9000, skewDismissed: true, serialPorts: [{ path: '/dev/ttyUSB0' }], baseline: { version: '0.0.2' } });
   });
 });

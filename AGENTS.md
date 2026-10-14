@@ -1,6 +1,6 @@
 # OT Fabric SunSpec Explorer: agent handoff
 
-Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine, read-only guard, Wails shell (Local only), frontend (both builds), `sunspec-explorerd` with the HTTP/SSE API, embedded web UI, token lifecycle, `url` and `token rotate`, bind rules, the target allow-list, the systemd unit, the container image and the release workflow (first release: v0.0.1, a preview). Recording (R7) is implemented (engine, API, both user interfaces) and part of v0.0.1. **Not there yet**: serial and TLS targets, CSV and device-file exports, request pacing and the free-space floor of R15, the clock-skew warning, installers. This file is the entry point for Claude Code and other agents. Read it fully, then the docs it points to, before writing code.
+Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine, read-only guard, Wails shell (Local only), frontend (both builds), `sunspec-explorerd` with the HTTP/SSE API, embedded web UI, token lifecycle, `url` and `token rotate`, bind rules, the target allow-list, the systemd unit, the container image and the release workflow (first release: v0.0.1, a preview). v0.0.1 is released (with recording). Implemented for v0.0.2: serial (`rtu://`) and TLS (`tcp+tls://`) targets with the serial allow-list, CSV and device-file exports, request pacing, the clock-skew warning, the version handshake in the web UI, the published snapshot JSON Schema, a Windows icon, trimmed fonts. The free-space floor for recordings (R15) is in as well. **Not there yet**: installers, a real-browser test suite, the soak test. This file is the entry point for Claude Code and other agents. Read it fully, then the docs it points to, before writing code.
 
 ## What this is
 
@@ -8,7 +8,7 @@ A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to 
 
 ## Read these, in this order
 
-1. `docs/REQUIREMENTS.md`: what to build, numbered requirements (R1..R20), acceptance tests (A1..A14).
+1. `docs/REQUIREMENTS.md`: what to build, numbered requirements (R1..R21), acceptance tests (A1..A18).
 2. `docs/ARCHITECTURE.md`: how: artifacts, layering, Service interface, API, data formats, security, milestones.
 3. `docs/BRANDING.md`: OT Fabric visual identity, tokens, icon rules, accessibility numbers.
 4. `docs/PROPOSAL-REVIEW.md`: why the original proposal was changed, what was verified, what is still unverified.
@@ -20,7 +20,7 @@ A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to 
 - **One `Service` interface, one Go implementation** (the in-process engine). The Wails binding and the daemon's HTTP handlers both wrap it; a contract test suite runs against the engine and against the HTTP API. The TypeScript `Service` interface has two implementations (Wails bindings, `fetch` to `/api/v1`).
 - **Remote = daemon + user-managed SSH port forward + browser. No GUI remote mode.** On the gateway run `sunspec-explorerd`; on the workstation `ssh -N -L <port>:127.0.0.1:<port> user@gateway` and open `http://127.0.0.1:<port>/#token=...`. No desktop install and no Wails on that path. There is no Go client of the daemon (`internal/api/client` is not to be built), no remote target UI and no token storage in the GUI.
 - **Everything is session-based**: a session = target + `sunspec.Device` + poller + recorder. All Modbus traffic of a session is serialized on one connection.
-- **Read-only is enforced, not implied**: allow-list FC03/FC04 at the lowest layer go-modbus allows (verify, see PROPOSAL-REVIEW), lint ban on `Write*` and on go-sunspec's `Server` outside tests, and a wire-capture test.
+- **Read-only is enforced, not implied**: every Modbus client is created with go-modbus's allow-list (`Config.AllowedFunctionCodes` = FC03, FC04; go-modbus v1.5.0 or later), plus the lint ban on `Write*` and on go-sunspec's `Server` outside tests, and wire-capture tests.
 - **Daemon is authenticated even on loopback**: bearer token generated on first start, kept in a 0600 file, rotatable (`sunspec-explorerd token rotate`); Host header check; target/serial allow-list. Default bind is 127.0.0.1 only; any other address needs `--allow-remote-bind`, logs a warning and still requires the token and the Host check (no TLS on the listener: use the SSH forward). `sunspec-explorerd url` prints the paste-ready URL.
 - **The daemon serves the web UI**: `sunspec-explorerd` embeds the frontend and serves it at `/` next to `/api/v1`, so a browser through the SSH tunnel is a first-class client (also the way to use the Explorer on workstations where the Wails GUI cannot run). The frontend is built twice from one source tree (Wails build, web build with no Wails runtime) against two TypeScript interfaces, `Service` and `Platform`.
 - **Recordings live in the engine's data directory, which defaults to a temporary folder**: `<tmp>/sunspec-explorer-<uid>`, mode 0700, ownership checked. That storage is ephemeral (lost when the OS clears the temp dir; Debian 13 mounts `/tmp` as tmpfs by default), so default size limits are small and the UI prompts to save a copy. `--data-dir` selects persistent storage.
@@ -34,7 +34,7 @@ A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to 
 - No Modbus write function codes anywhere. No exposure of go-sunspec's `Server`, the simulator, or arbitrary Modbus commands. The `Server` may only be used in `_test.go` files.
 - No cgo in `internal/` except what the Wails GUI strictly needs under `cmd/sunspec-explorer` and `internal/gui`.
 - Do not embed `registry.ModelMeta` in every snapshot or recording line; write a header with versions and reference the schema by model ID.
-- Never log the bearer token (it is shown only by `sunspec-explorerd url` and the one startup line that prints the URL), serial numbers at info level, or full target URLs with credentials.
+- Never log the bearer token (it is shown only by `sunspec-explorerd url` and, when the daemon writes to a terminal, by one startup line), serial numbers at info level, or full target URLs with credentials.
 - The web UI receives the token only in the URL fragment (`#token=...`), never in a query string or cookie. Never set `PrivateTmp=yes` in the systemd unit (systemd would delete recordings every time the service stops).
 - Pin the Wails v3 beta version in `go.mod`; it is a prerelease and APIs may still change.
 - Do not commit unless the user asks. When committing, follow the user's commit conventions.
@@ -58,7 +58,7 @@ internal/web/              static handler for the web UI (SPA fallback, CSP), us
 frontend/                  React + TypeScript + Tailwind v4, tokens from docs/BRANDING.md; two builds: dist/wails and dist/web; embed.go embeds both
 packaging/                 systemd unit, Dockerfile of the daemon image, later nfpm/AppImage config and signing notes
 tests/                     soak tests, fixtures (not there yet); contract, auth, Host, SSE and wire tests live in internal/api and internal/engine
-docs/                      the four documents above
+docs/                      the four documents above, REMOTE-USE.md, schema/ (JSON Schema of the snapshot export)
 ```
 
 ## Answered by the user (2026-10-13)

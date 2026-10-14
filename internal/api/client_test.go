@@ -128,6 +128,27 @@ func (c *httpService) Recordings(ctx context.Context) (v []model.RecordingInfo, 
 	return v, c.do(ctx, "GET", "/api/v1/recordings", nil, &v)
 }
 
+func (c *httpService) ExportSession(ctx context.Context, id, format string) (v model.ExportFile, err error) {
+	return v, c.do(ctx, "POST", "/api/v1/sessions/"+id+"/export", map[string]string{"format": format}, &v)
+}
+
+func (c *httpService) OpenRecordingCSV(ctx context.Context, recID string) (io.ReadCloser, model.RecordingInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/v1/recordings/"+recID+"/download?format=csv", nil)
+	if err != nil {
+		return nil, model.RecordingInfo{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, model.RecordingInfo{}, err
+	}
+	if res.StatusCode >= 400 {
+		defer func() { _ = res.Body.Close() }()
+		return nil, model.RecordingInfo{}, decodeError(res)
+	}
+	return res.Body, model.RecordingInfo{ID: recID, Name: recID}, nil
+}
+
 func (c *httpService) DeleteRecording(ctx context.Context, recID string) error {
 	return c.do(ctx, "DELETE", "/api/v1/recordings/"+recID, nil, nil)
 }

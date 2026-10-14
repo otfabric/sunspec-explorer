@@ -19,7 +19,10 @@ export type EventKind =
   | 'error'
   | 'resync';
 export type RecordingState = 'running' | 'stopped' | 'interrupted';
-export type RecordingStopReason = 'user' | 'limit' | 'session_closed' | 'shutdown' | 'error';
+export type RecordingStopReason = 'user' | 'limit' | 'disk_space' | 'session_closed' | 'shutdown' | 'error';
+
+/** What an engine can do, depending on how it was built and started. */
+export type Feature = 'recording' | 'serial' | 'tls';
 
 export interface Health {
   status: string;
@@ -28,7 +31,9 @@ export interface Health {
   uptime_s: number;
   go_sunspec: string;
   registry_models: number;
+  /** The engine's clock. */
   time: Timestamp;
+  features: Feature[];
 }
 
 export interface AppInfo {
@@ -41,13 +46,33 @@ export interface LibInfo {
   registry_models: number;
 }
 
+/** Line settings of an rtu:// target; the engine applies defaults for what is left out. */
+export interface SerialConfig {
+  baud?: number;
+  data_bits?: number;
+  parity?: 'none' | 'even' | 'odd';
+  stop_bits?: number;
+}
+
+export type ExportFormat = 'csv' | 'devicefile';
+export type RecordingFormat = 'jsonl' | 'csv';
+
+/** A file rendered by the engine, for the platform to save. */
+export interface ExportFile {
+  name: string;
+  mime: string;
+  text: string;
+}
+
 export interface TargetConfig {
+  /** tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<device>. */
   url: string;
   unit_id: number;
   timeout_ms?: number;
   reg_type?: RegType;
   base_addresses?: number[];
   max_models?: number;
+  serial?: SerialConfig;
 }
 
 export interface Target {

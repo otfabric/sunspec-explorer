@@ -2,10 +2,13 @@ import type { Platform } from '../../app/platform/platform';
 import { ServiceError, type ErrorCode, type LinkStatus, type Service } from '../../app/service/service';
 import type {
   ExplorerEvent,
+  ExportFile,
+  ExportFormat,
   Health,
   PollConfig,
   ProbeAttempt,
   RecordingConfig,
+  RecordingFormat,
   RecordingInfo,
   SerialPort,
   SessionInfo,
@@ -68,6 +71,7 @@ export class HttpService implements Service {
   stopRecording = (recId: string) => this.request<RecordingInfo>('POST', `/recordings/${encodeURIComponent(recId)}/stop`);
   recordings = () => this.request<RecordingInfo[]>('GET', '/recordings');
   deleteRecording = (recId: string) => this.request<void>('DELETE', `/recordings/${encodeURIComponent(recId)}`);
+  exportSession = (id: string, format: ExportFormat) => this.request<ExportFile>('POST', `/sessions/${encodeURIComponent(id)}/export`, { format });
   serialPorts = () => this.request<SerialPort[]>('GET', '/serial-ports');
 
   /**
@@ -75,12 +79,13 @@ export class HttpService implements Service {
    * hands the bytes to the browser as a download: a plain link to the file
    * would need the token in its URL.
    */
-  async saveRecording(recId: string): Promise<boolean> {
-    const response = await this.send('GET', `/recordings/${encodeURIComponent(recId)}/download`);
+  async saveRecording(recId: string, format: RecordingFormat = 'jsonl'): Promise<boolean> {
+    const query = format === 'csv' ? '?format=csv' : '';
+    const response = await this.send('GET', `/recordings/${encodeURIComponent(recId)}/download${query}`);
     if (!response.ok) {
       throw this.failure(response, await response.text());
     }
-    const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? `${recId}.jsonl`;
+    const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? `${recId}.${format}`;
     return this.platform.saveBlob(name, await response.blob());
   }
 

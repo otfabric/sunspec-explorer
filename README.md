@@ -2,7 +2,7 @@
 
 OT Fabric SunSpec Explorer: a read-only desktop tool to discover, browse, poll, export and record SunSpec devices, built on [go-sunspec](https://github.com/otfabric/go-sunspec).
 
-**Status: preview (v0.0.1).** Connect, discover, browse, read, poll, export and record work, in the desktop application and through the daemon. What a release contains is in [`RELEASE.md`](RELEASE.md). The requirements, architecture and branding are in [`docs/`](docs/). Agents start with [`AGENTS.md`](AGENTS.md); contributors with [`CONTRIBUTING.md`](CONTRIBUTING.md).
+**Status: preview (v0.0.2 in preparation; v0.0.1 released).** Connect, discover, browse, read, poll, export and record work, in the desktop application and through the daemon. What a release contains is in [`RELEASE.md`](RELEASE.md). The requirements, architecture and branding are in [`docs/`](docs/). Agents start with [`AGENTS.md`](AGENTS.md); contributors with [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 - [Remote use](docs/REMOTE-USE.md)
 - [Requirements](docs/REQUIREMENTS.md)

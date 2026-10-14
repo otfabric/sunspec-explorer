@@ -298,6 +298,55 @@ func TestHosts(t *testing.T) {
 	}
 }
 
+// R14: only the serial devices the operator named.
+func TestSerialAllowList(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"ttyUSB0", "ttyUSB1", "ttyACM0", "other"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := NewSerialAllowList([]string{filepath.Join(dir, "ttyUSB*"), filepath.Join(dir, "ttyACM0"), filepath.Join(dir, "ttyUSB0")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for device, want := range map[string]bool{
+		filepath.Join(dir, "ttyUSB0"): true, filepath.Join(dir, "ttyUSB7"): true, filepath.Join(dir, "ttyACM0"): true,
+		filepath.Join(dir, "ttyACM1"): false, filepath.Join(dir, "other"): false, "/etc/passwd": false,
+		filepath.Join(dir, "sub", "ttyUSB0"): false, filepath.Join(dir, "ttyUSB0", "..", "other"): false,
+	} {
+		if err := l.Allow(device); (err == nil) != want {
+			t.Errorf("%s: allowed=%v, want %v", device, err == nil, want)
+		}
+	}
+	// What exists and matches, once each, sorted.
+	want := []string{filepath.Join(dir, "ttyACM0"), filepath.Join(dir, "ttyUSB0"), filepath.Join(dir, "ttyUSB1")}
+	if got := l.Ports(); !slices.Equal(got, want) {
+		t.Errorf("Ports = %v", got)
+	}
+
+	none, err := NewSerialAllowList(nil)
+	if err != nil || none.Allow("/dev/ttyUSB0") == nil || len(none.Ports()) != 0 {
+		t.Errorf("an empty list allows something: %v", err)
+	}
+	if _, err := NewSerialAllowList([]string{"/dev/tty[USB"}); err == nil {
+		t.Error("a malformed pattern was accepted")
+	}
+	// Whatever this machine has, the call works.
+	_ = LocalSerialPorts()
+}
+
+func TestIsTemporary(t *testing.T) {
+	for dir, want := range map[string]bool{
+		filepath.Join(os.TempDir(), "sunspec-explorer-501"): true, os.TempDir(): true,
+		"/tmp/x": true, "/var/tmp/x": true, "/var/lib/sunspec-explorer": false, "/data": false, "/tmpfoo": false,
+	} {
+		if got := IsTemporary(dir); got != want {
+			t.Errorf("IsTemporary(%s) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
 // A13: the daemon only connects where it is allowed to.
 func TestTargetAllowList(t *testing.T) {
 	target := func(host string) *url.URL { return &url.URL{Scheme: "tcp", Host: net.JoinHostPort(host, "502")} }

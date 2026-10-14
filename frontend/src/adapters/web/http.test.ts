@@ -183,4 +183,28 @@ describe('HttpService', () => {
     await expect(service.deleteRecording('r9')).rejects.toMatchObject({ code: 'not_found' });
     expect(platform.saveBlob).not.toHaveBeenCalled();
   });
+
+  it('asks for a recording as CSV with a query parameter that is not the token', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response('captured_at,seq\n', { status: 200, headers: { 'Content-Type': 'text/csv' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    platform.saveBlob.mockClear();
+
+    await new HttpService(TOKEN, platform).saveRecording('r1', 'csv');
+
+    expect(urlsOf(fetchMock)).toEqual(['/api/v1/recordings/r1/download?format=csv']);
+    expect((fetchMock.mock.calls[0] as [string, RequestInit])[1].headers).toMatchObject({ Authorization: `Bearer ${TOKEN}` });
+    expect(platform.saveBlob.mock.calls[0]?.[0]).toBe('r1.csv');
+  });
+
+  it('has the daemon render an export', async () => {
+    const file = { name: 'points.csv', mime: 'text/csv', text: 'captured_at\n' };
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => json(file));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new HttpService(TOKEN, platform).exportSession('s 1', 'csv')).resolves.toEqual(file);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/sessions/s%201/export');
+    expect(init).toMatchObject({ method: 'POST', body: '{"format":"csv"}' });
+  });
 });

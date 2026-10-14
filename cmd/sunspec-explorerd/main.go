@@ -129,10 +129,19 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	flags.Var(&allowHosts, "allow-host", "additional host name the daemon answers to (repeatable; for --allow-remote-bind)")
 	flags.Var(&allowTargets, "allow-target",
 		"CIDR or address of devices the daemon may connect to (repeatable; default: private and link-local ranges)")
+	var allowSerial repeated
+	flags.Var(&allowSerial, "allow-serial",
+		"pattern of serial devices the daemon may open, such as /dev/ttyUSB* (repeatable; default: none)")
+	tlsCert := flags.String("tls-cert", "", "certificate (PEM) the daemon presents to tcp+tls:// devices")
+	tlsKey := flags.String("tls-key", "", "private key (PEM) of --tls-cert")
+	tlsCA := flags.String("tls-ca", "", "CA or device certificates (PEM) a tcp+tls:// device must present")
+	requestDelay := flags.Duration("request-delay", 0, "pause between the reads of two models of a session, such as 50ms")
 	maxSessions := flags.Int("max-sessions", engine.DefaultMaxSessions, "maximum number of open sessions")
 	maxRecording := flags.Int64("max-recording-mb", engine.DefaultMaxRecordingBytes>>20, "size at which a recording is stopped, in MiB")
 	maxRecordings := flags.Int64("max-recordings-mb", engine.DefaultMaxRecordingsBytes>>20, "size of all recordings together at which recording stops, in MiB")
 	rotate := flags.Int64("rotate-recording-mb", engine.DefaultRotateBytes>>20, "size at which a recording continues in a new file, in MiB")
+	minFree := flags.Int64("min-free-mb", engine.DefaultMinFreeBytes>>20,
+		"free space of the data directory's file system, in MiB, below which recording stops; 0 switches the check off")
 	noUI := flags.Bool("no-ui", false, "serve the API only, not the web UI")
 	debug := flags.Bool("debug", false, "log at debug level")
 	if err := flags.Parse(args); err != nil {
@@ -167,11 +176,34 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	if *maxRecording < 1 || *maxRecordings < 1 || *rotate < 1 {
 		return errors.New("recording sizes must be at least 1 MiB")
 	}
+	if *minFree < 0 {
+		return errors.New("--min-free-mb must not be negative")
+	}
+	minFreeBytes := *minFree << 20
+	if *minFree == 0 {
+		minFreeBytes = -1 // off
+	}
+	serial, err := daemon.NewSerialAllowList(allowSerial)
+	if err != nil {
+		return err
+	}
+	var tlsConfig *engine.TLSConfig
+	if *tlsCert != "" || *tlsKey != "" || *tlsCA != "" {
+		if tlsConfig, err = engine.LoadTLS(*tlsCert, *tlsKey, *tlsCA); err != nil {
+			return err
+		}
+	}
+	if *requestDelay < 0 || *requestDelay > 10*time.Second {
+		return errors.New("--request-delay must be between 0 and 10s")
+	}
 	eng := engine.New(engine.Options{
 		Logger: log, MaxSessions: *maxSessions, AllowTarget: allow.Allow,
+		AllowSerial: serial.Allow, SerialPorts: serial.Ports, NoSerial: len(allowSerial) == 0,
+		TLS: tlsConfig, RequestDelay: *requestDelay,
 		DataDir: p.dataDir, DataDirTemporary: daemon.IsTemporary(p.dataDir),
 		Recording: engine.RecordingLimits{
 			MaxBytes: *maxRecording << 20, MaxTotalBytes: *maxRecordings << 20, RotateBytes: *rotate << 20,
+			MinFreeBytes: minFreeBytes,
 		},
 	})
 	defer eng.Close()
@@ -217,15 +249,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	if warning != "" {
 		log.Warn(warning)
 	}
-	// The one place the token is shown at startup. It is printed, not logged
-	// through the logger, and nowhere else; "sunspec-explorerd url" shows it
-	// again.
 	hostname, _ := os.Hostname()
 	if access, err := daemon.AccessFor(bound, tokens.Token(), hostname); err == nil {
-		_, _ = fmt.Fprintf(stderr, "Open %s\n", access.URL)
-		if access.SSH != "" {
-			_, _ = fmt.Fprintf(stderr, "From a workstation, first run: %s\n", access.SSH)
-		}
+		announce(stderr, isTerminal(stderr), access)
 	}
 	if ready != nil {
 		ready <- bound
@@ -246,6 +272,31 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 		_ = srv.Close()
 	}
 	return nil
+}
+
+// announce tells how to open the daemon. The URL carries the token, so it is
+// shown only to a person at a terminal. A daemon started by systemd or in a
+// container writes to a journal or a log that others may read: there it only
+// names the command that prints the URL.
+func announce(w io.Writer, interactive bool, access daemon.Access) {
+	if !interactive {
+		_, _ = fmt.Fprintln(w, `Run "sunspec-explorerd url" for the address to open (it includes the access token, which is not written here).`)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Open %s\n", access.URL)
+	if access.SSH != "" {
+		_, _ = fmt.Fprintf(w, "From a workstation, first run: %s\n", access.SSH)
+	}
+}
+
+// isTerminal reports whether w is a terminal.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // runURL prints how to reach the running daemon. The URL goes to standard

@@ -44,6 +44,8 @@ Connect the desktop application (`make dev`) to `tcp://127.0.0.1:15020`, unit ID
 
 Or run the daemon in a container (`make docker-run`), serve the device on every address (`--url tcp://0.0.0.0:15020`) and connect to `tcp://host.docker.internal:15020`; see [`docs/REMOTE-USE.md`](docs/REMOTE-USE.md).
 
+The program icon is generated: `make appicon` renders `cmd/sunspec-explorer/appicon.png`, and `make winres` builds the Windows resource files (`rsrc_windows_*.syso`: icon and manifest) from it. Both results are committed, so a normal build needs neither.
+
 This is for hands-on checks only: the automated tests must not depend on the `sunspecctl` binary.
 
 ## Making Changes

@@ -3,7 +3,7 @@
 
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpService } from '../src/adapters/web/http';
 import { WebPlatform } from '../src/adapters/web/platform';
 import { takeToken } from '../src/adapters/web/token';
@@ -37,7 +37,23 @@ function openPage(token: string, theme: Theme) {
   persistTheme(theme);
   window.history.replaceState(null, '', `/#token=${token}`);
   const platform = new WebPlatform();
-  return render(<App service={new HttpService(takeToken(window), platform)} platform={platform} />);
+  // jsdom cannot download: the files the UI saves are caught here instead.
+  const saved = vi.spyOn(platform, 'saveFile').mockResolvedValue(true);
+  render(<App service={new HttpService(takeToken(window), platform)} platform={platform} />);
+  return saved;
+}
+
+// EXPLORER_EXPORTS=0 skips the CSV and device-file exports, for a daemon without that endpoint.
+const EXPORTS = process.env.EXPLORER_EXPORTS !== '0';
+const CSV_HEADER = 'captured_at,seq,model_index,model_id,group_path,point,value,scaled,unit,implemented,status';
+
+/** Export through the dialog and return the text the UI handed to the platform. */
+async function exportAs(user: ReturnType<typeof userEvent.setup>, saved: ReturnType<typeof openPage>, label: string): Promise<string> {
+  const before = saved.mock.calls.length;
+  await user.click(screen.getByRole('button', { name: 'Export…' }));
+  await user.click(within(screen.getByRole('dialog', { name: 'Export' })).getByRole('button', { name: label }));
+  await waitFor(() => expect(saved.mock.calls.length).toBe(before + 1), SLOW);
+  return (saved.mock.calls[before] as [string, string, string])[2];
 }
 
 // EXPLORER_RECORDING=0 skips the recording steps, for a daemon that cannot record yet.
@@ -61,7 +77,7 @@ async function recordWhilePolling(user: ReturnType<typeof userEvent.setup>) {
 
   await user.click(screen.getByRole('button', { name: 'Stop recording' }));
   expect(await screen.findByText(`Recording ${name} stopped: stopped by you`, {}, SLOW)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Save a copy' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: `Save a copy of ${name} as CSV` })).toBeEnabled();
 
   await user.click(screen.getByRole('button', { name: 'Recordings' }));
   const list = within(screen.getByRole('dialog', { name: 'Recordings' }));
@@ -78,7 +94,7 @@ const cyclesShown = () => Number(/cycles (\d+)/.exec(document.body.textContent ?
 describe.each<Theme>(['dark', 'light'])('web UI against the daemon, %s theme', (theme) => {
   it('connects, browses, polls over the event stream and disconnects', async () => {
     const user = userEvent.setup();
-    openPage(TOKEN, theme);
+    const saved = openPage(TOKEN, theme);
     expect(document.documentElement.dataset.theme).toBe(theme);
     expect(window.location.hash).toBe('');
     expect(window.location.href).not.toContain(TOKEN);
@@ -101,6 +117,13 @@ describe.each<Theme>(['dark', 'light'])('web UI against the daemon, %s theme', (
       const values = [...document.querySelectorAll('tbody tr[data-index] td:nth-child(3)')].map((cell) => cell.textContent ?? '');
       expect(values.some((value) => /\d/.test(value))).toBe(true);
     }, SLOW);
+
+    if (EXPORTS) {
+      expect((await exportAs(user, saved, 'Points (CSV)')).split(/\r?\n/)[0]).toBe(CSV_HEADER);
+      const device = JSON.parse(await exportAs(user, saved, 'Device file (sunspecctl)'));
+      expect(device.base_address).toBe(40000);
+      expect(device.models).toHaveLength(6);
+    }
 
     const interval = screen.getByLabelText('Poll interval in whole seconds');
     await user.clear(interval);

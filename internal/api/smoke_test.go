@@ -48,7 +48,7 @@ func TestWebUISmoke(t *testing.T) {
 	// The daemon serves the built page under its policy, without a token.
 	if built {
 		status, header, body := d.request(t, "GET", "/", "", "", nil)
-		if status != http.StatusOK || !strings.Contains(body, "OT Fabric SunSpec Explorer") ||
+		if status != http.StatusOK || !strings.Contains(body, "<title>SunSpec Explorer</title>") ||
 			header.Get("Content-Security-Policy") != web.ContentSecurityPolicy || strings.Contains(strings.ToLower(body), "wails") {
 			t.Errorf("/ = %d %v", status, header)
 		}

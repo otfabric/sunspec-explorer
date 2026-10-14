@@ -5,7 +5,7 @@
 	<key>CFBundleName</key>
 	<string>SunSpec Explorer</string>
 	<key>CFBundleDisplayName</key>
-	<string>OT Fabric SunSpec Explorer</string>
+	<string>SunSpec Explorer</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.otfabric.sunspec-explorer</string>
 	<key>CFBundleExecutable</key>

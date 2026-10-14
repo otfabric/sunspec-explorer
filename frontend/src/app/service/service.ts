@@ -4,10 +4,13 @@
 
 import type {
   ExplorerEvent,
+  ExportFile,
+  ExportFormat,
   Health,
   PollConfig,
   ProbeAttempt,
   RecordingConfig,
+  RecordingFormat,
   RecordingInfo,
   SerialPort,
   SessionInfo,
@@ -83,7 +86,15 @@ export interface Service {
   recordings(): Promise<RecordingInfo[]>;
   /** Deletes a recording that is not running. */
   deleteRecording(recId: string): Promise<void>;
-  /** Saves a copy of a recording where the user wants it. Resolves to false when cancelled. */
-  saveRecording(recId: string): Promise<boolean>;
+  /**
+   * Saves a copy of a recording where the user wants it, as recorded (JSON
+   * Lines, the default) or converted to CSV. Resolves to false when cancelled.
+   */
+  saveRecording(recId: string, format?: RecordingFormat): Promise<boolean>;
+  /**
+   * Reads the device once more and renders it as a file: every point as CSV
+   * (long format), or a device file that `sunspecctl serve` can replay.
+   */
+  exportSession(id: string, format: ExportFormat): Promise<ExportFile>;
   serialPorts(): Promise<SerialPort[]>;
 }

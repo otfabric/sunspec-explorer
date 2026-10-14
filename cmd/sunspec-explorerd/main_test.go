@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -143,11 +144,13 @@ func TestURLAndTokenLifecycle(t *testing.T) {
 		t.Errorf("health without the token = %d", got)
 	}
 
-	// The token appears once in what the daemon wrote: the startup line.
-	// Requests, also failed ones, do not add to that.
+	// This daemon does not write to a terminal, like one under systemd or in
+	// a container: the token is in none of its output, which names the
+	// command that shows it instead. Requests, also failed ones, do not
+	// change that.
 	logs := d.stderr.String()
-	if n := strings.Count(logs, token); n != 1 || !strings.Contains(logs, "Open http://"+d.addr+"/#token="+token+"\n") {
-		t.Errorf("token appears %d times in the daemon's output:\n%s", n, logs)
+	if strings.Contains(logs, token) || strings.Contains(logs, "#token=") || !strings.Contains(logs, `Run "sunspec-explorerd url"`) {
+		t.Errorf("the daemon's output:\n%s", logs)
 	}
 
 	// Rotation: the old token stops working, the new one works, no restart.
@@ -206,6 +209,92 @@ func TestURLAndTokenLifecycle(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// The URL with the token is shown to a person at a terminal, and to nobody
+// else.
+func TestAnnounce(t *testing.T) {
+	access := daemon.Access{URL: "http://127.0.0.1:8765/#token=secret-token", SSH: "ssh -N -L 8765:127.0.0.1:8765 <user>@gw"}
+
+	var terminal bytes.Buffer
+	announce(&terminal, true, access)
+	if terminal.String() != "Open "+access.URL+"\nFrom a workstation, first run: "+access.SSH+"\n" {
+		t.Errorf("at a terminal: %q", terminal.String())
+	}
+	terminal.Reset()
+	announce(&terminal, true, daemon.Access{URL: access.URL})
+	if strings.Contains(terminal.String(), "ssh") {
+		t.Errorf("ssh hint without a command: %q", terminal.String())
+	}
+
+	var journal bytes.Buffer
+	announce(&journal, false, access)
+	if strings.Contains(journal.String(), "secret-token") || strings.Contains(journal.String(), "token=") ||
+		!strings.Contains(journal.String(), "sunspec-explorerd url") {
+		t.Errorf("not at a terminal: %q", journal.String())
+	}
+
+	// A buffer, a pipe and a regular file are not terminals.
+	file, err := os.Create(filepath.Join(t.TempDir(), "log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close(); _ = w.Close() }()
+	if isTerminal(&journal) || isTerminal(file) || isTerminal(w) {
+		t.Error("a buffer, a file or a pipe was taken for a terminal")
+	}
+}
+
+// Serial devices, TLS identity and pacing come from the operator's flags.
+func TestTargetFlags(t *testing.T) {
+	d := start(t, "--allow-serial", "/dev/ttyUSB*", "--allow-serial", "/dev/ttyACM0", "--request-delay", "20ms")
+	token, err := daemon.ReadToken(filepath.Join(d.dir, daemon.TokenFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(addr, path string) string {
+		req, _ := http.NewRequest("GET", "http://"+addr+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		b, _ := io.ReadAll(res.Body)
+		return string(b)
+	}
+	if health := get(d.addr, "/api/v1/health"); !strings.Contains(health, `"serial"`) || !strings.Contains(health, `"recording"`) ||
+		strings.Contains(health, `"tls"`) {
+		t.Errorf("health = %s", health)
+	}
+
+	// Without --allow-serial the daemon opens no serial device.
+	var stdout, stderr bytes.Buffer
+	plain := start(t)
+	plainToken, _ := daemon.ReadToken(filepath.Join(plain.dir, daemon.TokenFileName))
+	token = plainToken
+	if health := get(plain.addr, "/api/v1/health"); strings.Contains(health, `"serial"`) {
+		t.Errorf("health without --allow-serial = %s", health)
+	}
+
+	for _, args := range [][]string{
+		{"--allow-serial", "[", "--data-dir", filepath.Join(t.TempDir(), "d")},
+		{"--tls-cert", "only-one.pem", "--data-dir", filepath.Join(t.TempDir(), "d")},
+		{"--tls-cert", "a", "--tls-key", "b", "--tls-ca", "c", "--data-dir", filepath.Join(t.TempDir(), "d")},
+		{"--request-delay", "1m", "--data-dir", filepath.Join(t.TempDir(), "d")},
+		{"--max-recording-mb", "0", "--data-dir", filepath.Join(t.TempDir(), "d")},
+		{"--min-free-mb", "-1", "--data-dir", filepath.Join(t.TempDir(), "d")},
+	} {
+		stderr.Reset()
+		if code := run(context.Background(), append([]string{"--listen", "127.0.0.1:0"}, args...), &stdout, &stderr); code != 1 || stderr.Len() == 0 {
+			t.Errorf("%v = %d %q", args, code, stderr.String())
+		}
+	}
 }
 
 func TestStaleStateFile(t *testing.T) {

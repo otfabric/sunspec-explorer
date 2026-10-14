@@ -3,13 +3,15 @@
 // Package engine is the in-process implementation of service.Service: it owns
 // the sessions, their Modbus connections, polling and the event stream.
 //
-// The engine only reads. Every Modbus client it creates carries the
-// readonly.Guard, and every call into go-sunspec runs inside readonly.Do.
+// The engine only reads. Every Modbus client it creates is restricted to
+// readonly.FunctionCodes (FC03 and FC04) and counted by the readonly.Guard.
 package engine
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -52,6 +54,21 @@ type Options struct {
 	// AllowTarget, when set, decides whether the engine may connect to a
 	// target URL. The daemon installs its allow-list here.
 	AllowTarget func(u *url.URL) error
+	// AllowSerial, when set, decides whether the engine may open a serial
+	// device. The daemon installs its allow-list here; without one every
+	// device may be opened, which suits the desktop application.
+	AllowSerial func(device string) error
+	// NoSerial switches serial targets off altogether.
+	NoSerial bool
+	// SerialPorts lists the serial devices to offer. Nil offers none.
+	SerialPorts func() []string
+	// TLS is what tcp+tls:// targets are opened with: the certificate this
+	// side presents and the authorities the device's certificate must chain
+	// to. Without it the engine opens no TLS target.
+	TLS *TLSConfig
+	// RequestDelay is a pause between the reads of two models of a session,
+	// for devices and serial lines that cannot take requests back to back.
+	RequestDelay time.Duration
 	// DataDir is the directory recordings are kept in (under "recordings").
 	// Without one the engine does not record. The caller has created and
 	// checked it.
@@ -61,6 +78,13 @@ type Options struct {
 	DataDirTemporary bool
 	// Recording bounds what recordings may use.
 	Recording RecordingLimits
+}
+
+// TLSConfig is the identity of the engine towards Modbus/TCP Security
+// devices.
+type TLSConfig struct {
+	Certificate tls.Certificate
+	RootCAs     *x509.CertPool
 }
 
 // Engine implements service.Service in process.
@@ -118,7 +142,8 @@ func New(opts Options) *Engine {
 	return e
 }
 
-// Guard returns the read-only guard of the engine's Modbus clients.
+// Guard returns the counters of what the engine's Modbus clients sent and
+// what their allow-list refused.
 func (e *Engine) Guard() *readonly.Guard { return e.guard }
 
 // Close closes every session. The engine cannot be used afterwards.
@@ -150,7 +175,49 @@ func (e *Engine) Health(context.Context) (model.Health, error) {
 		GoSunspec:      buildinfo.GoSunspecVersion(),
 		RegistryModels: registry.Count(),
 		Time:           time.Now().UTC(),
+		Features:       e.features(),
 	}, nil
+}
+
+func (e *Engine) features() []string {
+	features := []string{}
+	if e.recs != nil {
+		features = append(features, model.FeatureRecording)
+	}
+	if !e.opts.NoSerial {
+		features = append(features, model.FeatureSerial)
+	}
+	if e.opts.TLS != nil {
+		features = append(features, model.FeatureTLS)
+	}
+	return features
+}
+
+// allowed applies the engine's rules to a target before anything is opened.
+func (e *Engine) allowed(t *target) error {
+	switch t.scheme {
+	case schemeRTU:
+		if e.opts.NoSerial {
+			return service.Errorf(service.CodeNotAllowed, "serial targets are switched off on this engine")
+		}
+		if e.opts.AllowSerial != nil {
+			if err := e.opts.AllowSerial(t.device); err != nil {
+				return service.Wrap(service.CodeNotAllowed, err, "serial device %s", t.device)
+			}
+		}
+		return nil
+	case schemeTLS:
+		if e.opts.TLS == nil {
+			return service.Errorf(service.CodeNotAllowed,
+				"TLS targets need the engine to be started with a client certificate and CA (--tls-cert, --tls-key, --tls-ca)")
+		}
+	}
+	if e.opts.AllowTarget != nil {
+		if err := e.opts.AllowTarget(t.url); err != nil {
+			return service.Wrap(service.CodeNotAllowed, err, "target %s", t.display)
+		}
+	}
+	return nil
 }
 
 // OpenSession implements service.Service.
@@ -159,10 +226,8 @@ func (e *Engine) OpenSession(ctx context.Context, cfg model.TargetConfig) (model
 	if err != nil {
 		return model.SessionInfo{}, err
 	}
-	if e.opts.AllowTarget != nil {
-		if err := e.opts.AllowTarget(t.url); err != nil {
-			return model.SessionInfo{}, service.Wrap(service.CodeNotAllowed, err, "target %s", t.display)
-		}
+	if err := e.allowed(t); err != nil {
+		return model.SessionInfo{}, err
 	}
 
 	e.mu.Lock()
@@ -373,9 +438,18 @@ func (e *Engine) DeleteRecording(_ context.Context, recID string) error {
 	return nil
 }
 
-// SerialPorts implements service.Service. Serial targets are not supported yet.
+// SerialPorts implements service.Service.
 func (e *Engine) SerialPorts(context.Context) ([]model.SerialPort, error) {
-	return []model.SerialPort{}, nil
+	ports := []model.SerialPort{}
+	if e.opts.NoSerial || e.opts.SerialPorts == nil {
+		return ports, nil
+	}
+	for _, path := range e.opts.SerialPorts() {
+		if e.opts.AllowSerial == nil || e.opts.AllowSerial(path) == nil {
+			ports = append(ports, model.SerialPort{Path: path})
+		}
+	}
+	return ports, nil
 }
 
 func errNoDataDir() error {

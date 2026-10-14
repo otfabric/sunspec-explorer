@@ -1,5 +1,5 @@
 .PHONY: help all check test coverage coverage-html coverage-check coverage-clean fmt fmt-check vet lint lint-ci vuln \
-	frontend frontend-install frontend-check build build-gui build-daemon build-daemon-all bundle-macos docker docker-all docker-run dev clean
+	frontend frontend-install frontend-check build build-gui build-daemon build-daemon-all bundle-macos appicon winres docker docker-all docker-run dev clean
 
 help: ## This help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -130,6 +130,14 @@ build-gui: frontend ## Build the desktop application (needs cgo and the platform
 
 bundle-macos: build-gui ## Wrap the desktop binary in bin/SunSpec Explorer.app (macOS, ad-hoc signed)
 	@packaging/macos/bundle.sh bin/$(GUI_NAME) $(VERSION) bin
+
+appicon: ## Render cmd/sunspec-explorer/appicon.png from the SunSpec icon geometry
+	@python3 packaging/icons/render_appicon.py
+
+winres: ## Regenerate the Windows resources (icon, manifest) linked into the desktop executable
+	@cd cmd/sunspec-explorer && go run github.com/tc-hib/go-winres@latest simply --arch amd64,arm64 --manifest gui \
+		--icon appicon.png --product-name "SunSpec Explorer" --file-description "OT Fabric SunSpec Explorer" \
+		--copyright "Copyright (c) 2026 OT Fabric. MIT License." --original-filename sunspec-explorer.exe --out rsrc
 
 docker: ## Build the daemon's container image for this machine ($(IMAGE):$(VERSION) and :dev)
 	@echo "Building image $(IMAGE):$(VERSION)"

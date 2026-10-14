@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react';
+import { estimateSkewMs } from './engine';
 import { toServiceError, type Service } from '../service/service';
-import type { Snapshot, TargetConfig } from '../service/types';
+import type { ExportFile, ExportFormat, RecordingFormat, Snapshot, TargetConfig } from '../service/types';
 import { initialState, reduce, type Selection } from './store';
-
-const SUPPORTED_API_MAJOR = '1';
 
 /**
  * Connects the reducer to a Service. State changes only through Service
@@ -23,25 +22,35 @@ export function useExplorer(service: Service) {
     }
   }, []);
 
-  useEffect(() => {
-    let current = true;
-    const unsubscribe = service.subscribe(
-      0,
-      (event) => dispatch({ type: 'event', event }),
-      (status) => dispatch({ type: 'link', status }),
-    );
+  // Versions, features and the clock of the engine. Asked at startup and
+  // again whenever a lost link is back: the engine may have been replaced.
+  const checkHealth = useCallback(() => {
+    const sentAt = Date.now();
     service
       .health()
       .then((health) => {
-        dispatch({ type: 'health', health });
-        if (health.api_version.split('.')[0] !== SUPPORTED_API_MAJOR) {
-          dispatch({
-            type: 'notice',
-            message: `The engine speaks API version ${health.api_version}; this window needs version ${SUPPORTED_API_MAJOR}.x.`,
-          });
-        }
+        dispatch({ type: 'health', health, skewMs: estimateSkewMs(health.time, sentAt, Date.now()) });
+        return health.features.includes('serial') ? service.serialPorts() : [];
       })
+      .then((ports) => dispatch({ type: 'serialPorts', ports }))
       .catch(report);
+  }, [service, report]);
+
+  useEffect(() => {
+    let current = true;
+    let wasDown = false;
+    const unsubscribe = service.subscribe(
+      0,
+      (event) => dispatch({ type: 'event', event }),
+      (status) => {
+        dispatch({ type: 'link', status });
+        if (status === 'up' && wasDown) {
+          checkHealth();
+        }
+        wasDown = status === 'down';
+      },
+    );
+    checkHealth();
     // A daemon keeps its session while no window is looking: a tab that is
     // opened or reloaded picks up the one that is there.
     service
@@ -57,7 +66,7 @@ export function useExplorer(service: Service) {
       current = false;
       unsubscribe();
     };
-  }, [service, report]);
+  }, [service, report, checkHealth]);
 
   // After a connect, a chain change or a sample whose shape is new, fetch the
   // affected models with full metadata.
@@ -175,8 +184,15 @@ export function useExplorer(service: Service) {
           .then(() => dispatch({ type: 'recordingDeleted', id }))
           .catch(report);
       },
-      saveRecording(id: string) {
-        service.saveRecording(id).catch(report);
+      saveRecording(id: string, format: RecordingFormat) {
+        service.saveRecording(id, format).catch(report);
+      },
+      /** Has the engine read the device and render it as a file. */
+      async exportSession(format: ExportFormat): Promise<ExportFile | null> {
+        return sessionId === undefined ? null : service.exportSession(sessionId, format);
+      },
+      dismissSkew() {
+        dispatch({ type: 'dismissSkew' });
       },
       dismissRecording() {
         dispatch({ type: 'dismissRecording' });

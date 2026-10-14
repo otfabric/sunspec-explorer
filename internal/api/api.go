@@ -91,6 +91,7 @@ func New(svc service.Service, opts Options) http.Handler {
 	api.HandleFunc("DELETE "+prefix+"/sessions/{id}/polling", s.stopPolling)
 	api.HandleFunc("GET "+prefix+"/sessions/{id}/state", s.state)
 	api.HandleFunc("POST "+prefix+"/sessions/{id}/recordings", s.startRecording)
+	api.HandleFunc("POST "+prefix+"/sessions/{id}/export", s.exportSession)
 	api.HandleFunc("GET "+prefix+"/events", s.events)
 	api.HandleFunc("GET "+prefix+"/recordings", s.recordings)
 	api.HandleFunc("POST "+prefix+"/recordings/{rid}/stop", s.stopRecording)
@@ -242,6 +243,37 @@ func (s *server) serialPorts(w http.ResponseWriter, r *http.Request) {
 	s.reply(w, r, v, err)
 }
 
+// exportSession renders a session in another format. The client names a
+// format, never a file: it gets the text back and saves it itself.
+func (s *server) exportSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Format string `json:"format"`
+	}
+	if !s.decode(w, r, &req) {
+		return
+	}
+	v, err := s.svc.ExportSession(r.Context(), r.PathValue("id"), req.Format)
+	s.reply(w, r, v, err)
+}
+
+// downloadCSV streams a recording converted to CSV. The size is not known
+// in advance, so there is no Content-Length and no Range.
+func (s *server) downloadCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Range") != "" {
+		s.fail(w, r, service.Errorf(service.CodeInvalidArgument, "Range is not supported for the CSV form of a recording"))
+		return
+	}
+	body, info, err := s.svc.OpenRecordingCSV(r.Context(), r.PathValue("rid"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	defer func() { _ = body.Close() }()
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", info.Name+".csv"))
+	_, _ = io.Copy(w, body)
+}
+
 func (s *server) deleteRecording(w http.ResponseWriter, r *http.Request) {
 	s.replyEmpty(w, r, s.svc.DeleteRecording(r.Context(), r.PathValue("rid")))
 }
@@ -251,6 +283,15 @@ func (s *server) deleteRecording(w http.ResponseWriter, r *http.Request) {
 // delivered up to its size at this moment; "Range: bytes=N-" fetches what
 // was added since, or resumes a download that broke off.
 func (s *server) download(w http.ResponseWriter, r *http.Request) {
+	switch format := r.URL.Query().Get("format"); format {
+	case "", "jsonl":
+	case "csv":
+		s.downloadCSV(w, r)
+		return
+	default:
+		s.fail(w, r, service.Errorf(service.CodeInvalidArgument, "recording format %q: use jsonl or csv", format))
+		return
+	}
 	start, end, ranged, ok := parseRange(r.Header.Get("Range"))
 	if !ok {
 		s.fail(w, r, service.Errorf(service.CodeInvalidArgument, "unsupported Range header: use bytes=<first>- or bytes=<first>-<last>"))

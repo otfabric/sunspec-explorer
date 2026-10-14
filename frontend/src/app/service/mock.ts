@@ -8,6 +8,8 @@ import {
   API_VERSION,
   SNAPSHOT_SCHEMA,
   type ExplorerEvent,
+  type ExportFile,
+  type ExportFormat,
   type GroupView,
   type Health,
   type MetadataLevel,
@@ -18,6 +20,7 @@ import {
   type PollState,
   type ProbeAttempt,
   type RecordingConfig,
+  type RecordingFormat,
   type RecordingInfo,
   type RecordingStopReason,
   type Sample,
@@ -350,8 +353,40 @@ const idlePolling = (): PollState => ({
   overruns: 0,
 });
 
+/** The host of a network target, the device of a serial one; null for a URL the engine would refuse. */
 function hostOf(url: string): string | null {
-  return /^(?:tcp|rtuovertcp):\/\/([^:/]+)(?::\d+)?$/.exec(url)?.[1] ?? null;
+  return /^(?:tcp|rtuovertcp|tcp\+tls):\/\/([^:/]+)(?::\d+)?$/.exec(url)?.[1] ?? /^rtu:\/\/(.+)$/.exec(url)?.[1] ?? null;
+}
+
+const CSV_HEADER = 'captured_at,seq,model_index,model_id,group_path,point,value,scaled,unit,implemented,status';
+const csvCell = (value: unknown) => (typeof value === 'string' && /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : String(value ?? ''));
+
+/** Long-format CSV rows of one read: one row per point. */
+function csvRows(capturedAt: string, seq: number, models: ModelResult[]): string[] {
+  const rows: string[] = [];
+  const walk = (model: ModelResult, group: GroupView, parent: string) => {
+    const path = `${parent}${group.name}${group.index > 0 ? `[${group.index}]` : ''}`;
+    for (const point of group.points) {
+      const cells = [capturedAt, seq, model.index, model.id, path, point.name, point.implemented ? point.raw : '', point.scaled, point.units, point.implemented, model.status];
+      rows.push(cells.map(csvCell).join(','));
+    }
+    group.groups.forEach((child) => walk(model, child, `${path}/`));
+  };
+  models.forEach((model) => model.group && walk(model, model.group, ''));
+  return rows;
+}
+
+/** The points of a group as a device file lists them: by name, null when not implemented. */
+function deviceFileGroup(group: GroupView): { points: Record<string, unknown>; groups?: Record<string, unknown[]> } {
+  const points = Object.fromEntries(group.points.map((point) => [point.name, point.implemented ? (point.scaled ?? point.raw) : null]));
+  if (group.groups.length === 0) {
+    return { points };
+  }
+  const groups: Record<string, unknown[]> = {};
+  for (const child of group.groups) {
+    (groups[child.name] ??= []).push(deviceFileGroup(child));
+  }
+  return { points, groups };
 }
 
 export class MockService implements Service {
@@ -389,13 +424,14 @@ export class MockService implements Service {
       go_sunspec: 'mock',
       registry_models: DEVICE.length - 1,
       time: new Date().toISOString(),
+      features: ['recording', 'serial', 'tls'],
     };
   }
 
   async openSession(cfg: TargetConfig): Promise<SessionInfo> {
     const host = hostOf(cfg.url);
     if (host === null) {
-      throw new ServiceError('invalid_argument', `invalid target URL "${cfg.url}": want tcp://host:port or rtuovertcp://host:port`);
+      throw new ServiceError('invalid_argument', `invalid target URL "${cfg.url}": want tcp://host:port, rtuovertcp://host:port, tcp+tls://host:port or rtu://<device>`);
     }
     const regType = cfg.reg_type ?? 'holding';
     if (host === 'fail.test') {
@@ -551,14 +587,33 @@ export class MockService implements Service {
     this.recordings_.splice(this.recordings_.indexOf(recording), 1);
   }
 
-  async saveRecording(recId: string): Promise<boolean> {
+  async saveRecording(recId: string, format: RecordingFormat = 'jsonl'): Promise<boolean> {
     const recording = this.recording(recId);
-    const blob = new Blob([recording.lines.join('\n') + '\n'], { type: 'application/x-ndjson' });
-    return this.platform ? this.platform.saveBlob(`${recording.info.name}.jsonl`, blob) : true;
+    const lines =
+      format === 'jsonl'
+        ? recording.lines
+        : [CSV_HEADER, ...recording.lines.map((line) => JSON.parse(line) as Sample & { type: string }).flatMap((line) => (line.type === 'sample' ? csvRows(line.captured_at, line.seq, line.models) : []))];
+    const blob = new Blob([lines.join('\n') + '\n'], { type: format === 'csv' ? 'text/csv' : 'application/x-ndjson' });
+    return this.platform ? this.platform.saveBlob(`${recording.info.name}.${format}`, blob) : true;
+  }
+
+  async exportSession(id: string, format: ExportFormat): Promise<ExportFile> {
+    const snapshot = await this.snapshot(id, { metadata: 'full' });
+    const stamp = snapshot.captured_at.slice(0, 19).replace(/[-:]/g, '');
+    if (format === 'csv') {
+      const text = [CSV_HEADER, ...csvRows(snapshot.captured_at, 0, snapshot.models)].join('\n') + '\n';
+      return { name: `sunspec-points-${stamp}Z.csv`, mime: 'text/csv', text };
+    }
+    const device = {
+      unit_id: snapshot.target.unit_id,
+      base_address: snapshot.target.base_address,
+      models: snapshot.models.map((model) => (model.group ? { id: model.id, name: model.name, ...deviceFileGroup(model.group) } : { id: model.id, registers: model.raw_registers })),
+    };
+    return { name: `sunspec-device-${stamp}Z.json`, mime: 'application/json', text: JSON.stringify(device, null, 2) + '\n' };
   }
 
   async serialPorts(): Promise<SerialPort[]> {
-    return [];
+    return [{ path: '/dev/ttyUSB0' }, { path: '/dev/ttyUSB1' }];
   }
 
   private session(id: string): MockSession {

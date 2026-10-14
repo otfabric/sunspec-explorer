@@ -19,4 +19,6 @@ export interface Platform {
   /** The theme the user chose earlier, or null on first run. */
   loadTheme(): Theme | null;
   copyText(text: string): Promise<void>;
+  /** Loads the page again, e.g. after the engine was updated under it. */
+  reload(): void;
 }

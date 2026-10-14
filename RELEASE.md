@@ -1,5 +1,53 @@
 # sunspec-explorer Releases
 
+## v0.0.2
+
+**Date:** 2026-10-14
+**Previous release:** v0.0.1
+
+## Summary
+
+Serial and TLS devices, two more export formats, and the rough edges of the first preview.
+
+## Changes
+
+### Added
+
+- **Serial targets** (`rtu://<device>`, for example `rtu:///dev/ttyUSB0` or `rtu://COM3`) with baud rate, data bits, parity and stop bits (default 9600 8N1). The page offers the serial devices of the machine the engine runs on. The daemon opens only the devices its operator names with `--allow-serial '<pattern>'`; without that flag it opens none.
+- **Modbus/TCP Security targets** (`tcp+tls://host:port`, mutual TLS). The engine uses the identity it was started with: `--tls-cert`, `--tls-key`, `--tls-ca`, on the daemon and on the desktop application. Key material never passes through the user interface or the API.
+- **Export as CSV**: one row per point (`captured_at, seq, model_index, model_id, group_path, point, value, scaled, unit, implemented, status`), of a single read and of a recording ("Save a copy as CSV").
+- **Export as device file**: a JSON file that `sunspecctl serve` turns back into the same device, register for register. Models are written by point values where those reproduce the registers exactly, otherwise by their registers.
+- **JSON Schema** of the snapshot export: `docs/schema/snapshot-1.schema.json`. Every snapshot the Explorer writes is checked against it in the tests.
+- **Clock-skew warning**: the page warns when the daemon's clock differs from the browser's by more than 5 seconds; sample times are the daemon's.
+- **Free-space floor for recordings**: recording leaves 64 MiB of the data directory's file system alone (`--min-free-mb`; 0 switches it off). Below that no recording starts, and a running one is stopped with the reason "the disk is almost full". On a temporary directory in RAM this protects the gateway's memory.
+- **Request pacing**: `--request-delay` puts a pause between the reads of two models, for slow serial lines and devices that cannot take requests back to back.
+- The Windows executable has an icon and an application manifest.
+- `GET /api/v1/health` reports `features` (`recording`, `serial`, `tls`); `POST /api/v1/sessions/{id}/export`; `GET /api/v1/recordings/{id}/download?format=csv`.
+
+### Changed
+
+- **The daemon no longer writes its URL, and with it the access token, to a journal or a container log.** It prints the URL at startup only when it is started from a terminal. Otherwise it writes one line that names the command to use: `sunspec-explorerd url`.
+- **A page that is older than its daemon says so.** When the connection returns after a daemon upgrade, the page offers a reload; when the API is incompatible, it requires one.
+- **Read-only is now enforced by the Modbus client itself.** Every client is created with go-modbus's function-code allow-list (new in go-modbus v1.5.0, added for this project) set to FC03 and FC04; anything else is refused before it reaches the transport. It replaces the guard of v0.0.1, which stopped such requests from a metrics callback.
+- The window and the browser tab are titled "SunSpec Explorer", like the banner.
+- The web bundle is a third of its size (about 0.4 MB compressed instead of 1.2 MB): only the Latin subsets of the fonts are shipped.
+- CI and releases build with the current stable Go.
+
+### Fixed
+
+- `rtuovertcp://` targets are now covered by tests against an RTU responder; v0.0.1 listed them untested.
+
+### Built with
+
+go-sunspec v0.5.1, go-modbus v1.5.0, Wails v3.0.0-beta.29.
+
+### Not in this release
+
+- Code signing, installers and packages, as in v0.0.1.
+- Serial targets were tested for their rules and settings, and RTU framing over TCP; they were not run against a physical serial port.
+
+---
+
 ## v0.0.1
 
 **Date:** 2026-10-14

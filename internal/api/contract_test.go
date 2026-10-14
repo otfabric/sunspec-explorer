@@ -5,9 +5,11 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +20,8 @@ import (
 )
 
 var ctx = context.Background()
+
+const csvColumns = "captured_at,seq,model_index,model_id,group_path,point,value,scaled,unit,implemented,status"
 
 // next returns the first event that matches, failing after a timeout.
 func next(t testing.TB, ch <-chan model.Event, what string, match func(model.Event) bool) model.Event {
@@ -184,6 +188,37 @@ func contract(t *testing.T, svc service.Service) {
 		t.Errorf("event = %+v", changed)
 	}
 
+	// Exports of a single read: CSV in long format, and a device file.
+	if _, err := svc.ExportSession(ctx, info.ID, "xlsx"); service.CodeOf(err) != service.CodeInvalidArgument {
+		t.Errorf("ExportSession with an unknown format = %v", err)
+	}
+	if _, err := svc.ExportSession(ctx, "nope", model.ExportCSV); service.CodeOf(err) != service.CodeNotFound {
+		t.Errorf("ExportSession of an unknown session = %v", err)
+	}
+	points, err := svc.ExportSession(ctx, info.ID, model.ExportCSV)
+	if err != nil || points.Mime != "text/csv" || !strings.HasSuffix(points.Name, ".csv") ||
+		!strings.HasPrefix(points.Text, csvColumns+"\n") || !strings.Contains(points.Text, ",,1,103,,A,123,12.3,A,true,ok\n") {
+		t.Errorf("CSV export = %v, %.200s", err, points.Text)
+	}
+	dev2, err := svc.ExportSession(ctx, info.ID, model.ExportDeviceFile)
+	var file struct {
+		UnitID      int `json:"unit_id"`
+		BaseAddress int `json:"base_address"`
+		Models      []struct {
+			ID        int             `json:"id"`
+			Points    map[string]any  `json:"points"`
+			Registers []int           `json:"registers"`
+			Groups    json.RawMessage `json:"groups"`
+		} `json:"models"`
+	}
+	if err != nil || dev2.Mime != "application/json" || json.Unmarshal([]byte(dev2.Text), &file) != nil {
+		t.Fatalf("device file export = %v, %.200s", err, dev2.Text)
+	}
+	if file.UnitID != 1 || file.BaseAddress != 40000 || len(file.Models) != 2 || file.Models[0].ID != 1 ||
+		file.Models[0].Points["Mn"] != "OT Fabric" || file.Models[1].Points["W"] != float64(4200) {
+		t.Errorf("device file = %+v", file)
+	}
+
 	// Recording: start, counters on the sample events, stop, list, read,
 	// delete.
 	if _, err := svc.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "../x"}); service.CodeOf(err) != service.CodeInvalidArgument {
@@ -243,6 +278,17 @@ func contract(t *testing.T, svc service.Service) {
 	}
 	if _, _, err := svc.OpenRecording(ctx, "contract", int64(len(whole))+5); service.CodeOf(err) != service.CodeInvalidArgument {
 		t.Errorf("OpenRecording beyond the end = %v", err)
+	}
+	// The same recording as CSV: one row per point per sample.
+	csvBody, _, err := svc.OpenRecordingCSV(ctx, "contract")
+	if err != nil {
+		t.Fatalf("OpenRecordingCSV: %v", err)
+	}
+	table, _ := io.ReadAll(csvBody)
+	_ = csvBody.Close()
+	rows := strings.Split(strings.TrimSpace(string(table)), "\n")
+	if rows[0] != csvColumns || len(rows) < 50 || !strings.Contains(string(table), ",1,103,,A,123,12.3,A,true,ok") {
+		t.Errorf("recording as CSV: %d rows, first %q", len(rows), rows[0])
 	}
 	if err := svc.DeleteRecording(ctx, "contract"); err != nil {
 		t.Errorf("DeleteRecording: %v", err)

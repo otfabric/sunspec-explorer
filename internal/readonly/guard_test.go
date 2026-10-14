@@ -27,17 +27,21 @@ func TestAllowed(t *testing.T) {
 	}
 }
 
-func TestDo(t *testing.T) {
-	want := errors.New("plain")
-	if err := Do(func() error { return want }); err != want {
-		t.Errorf("Do = %v", err)
+func TestFunctionCodes(t *testing.T) {
+	codes := FunctionCodes()
+	if len(codes) != 2 || codes[0] != 0x03 || codes[1] != 0x04 {
+		t.Errorf("FunctionCodes = %v", codes)
 	}
-	defer func() {
-		if r := recover(); r != "other" {
-			t.Errorf("recovered %v, want the foreign panic to continue", r)
+	for _, fc := range codes {
+		if !Allowed(fc) {
+			t.Errorf("0x%02X is in the list and not allowed", uint8(fc))
 		}
-	}()
-	_ = Do(func() error { panic("other") })
+	}
+	// The caller gets its own slice: changing it changes nothing here.
+	codes[0] = 0x06
+	if FunctionCodes()[0] != 0x03 {
+		t.Error("the list can be changed from outside")
+	}
 }
 
 // device counts what reaches a served SunSpec device.
@@ -78,10 +82,11 @@ func serve(t *testing.T) (addr string, dev *device) {
 	return addr, dev
 }
 
-// The guard stops every request other than FC03/FC04 before it is sent: the
-// wire stays clean and the device sees no write, although the test calls the
-// client's write and diagnostic methods directly.
-func TestGuardBlocksEverythingButReads(t *testing.T) {
+// A client set up the way the engine sets up its clients refuses every
+// request other than FC03/FC04 before it is sent: the wire stays clean and
+// the device sees no write, although the test calls the client's write and
+// diagnostic methods directly. The guard counts both kinds.
+func TestClientRefusesEverythingButReads(t *testing.T) {
 	addr, dev := serve(t)
 	tap, err := NewWireTap(addr)
 	if err != nil {
@@ -90,7 +95,9 @@ func TestGuardBlocksEverythingButReads(t *testing.T) {
 	defer tap.Close()
 
 	guard := &Guard{}
-	client, err := modbus.New(modbus.Config{URL: "tcp://" + tap.Addr(), Timeout: time.Second, Metrics: guard})
+	client, err := modbus.New(modbus.Config{
+		URL: "tcp://" + tap.Addr(), Timeout: time.Second, Metrics: guard, AllowedFunctionCodes: FunctionCodes(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +124,8 @@ func TestGuardBlocksEverythingButReads(t *testing.T) {
 		"FC17 report server ID": func() error { _, e := client.ReportServerID(ctx, 1); return e },
 	}
 	for name, call := range blocked {
-		var v *Violation
-		if err := Do(call); !errors.As(err, &v) {
-			t.Errorf("%s: err = %v, want a Violation", name, err)
-		} else if v.Error() == "" || Allowed(v.FunctionCode) {
-			t.Errorf("%s: violation = %v", name, v)
+		if err := call(); !errors.Is(err, modbus.ErrFunctionCodeNotAllowed) {
+			t.Errorf("%s: err = %v, want ErrFunctionCodeNotAllowed", name, err)
 		}
 	}
 	if got := guard.Violations(); got != uint64(len(blocked)) {
@@ -129,18 +133,11 @@ func TestGuardBlocksEverythingButReads(t *testing.T) {
 	}
 
 	// The client is still usable, and reads pass.
-	var regs []uint16
-	if err := Do(func() error {
-		var e error
-		regs, e = client.ReadRegisters(ctx, 1, da, 1, modbus.HoldingRegister)
-		return e
-	}); err != nil || len(regs) != 1 || regs[0] != 1 {
-		t.Fatalf("read after the violations = %v, %v", regs, err)
+	regs, err := client.ReadRegisters(ctx, 1, da, 1, modbus.HoldingRegister)
+	if err != nil || len(regs) != 1 || regs[0] != 1 {
+		t.Fatalf("read after the refusals = %v, %v", regs, err)
 	}
-	if err := Do(func() error {
-		_, e := client.ReadRegisters(ctx, 1, da, 1, modbus.InputRegister)
-		return e
-	}); !errors.Is(err, modbus.ErrIllegalDataAddress) {
+	if _, err := client.ReadRegisters(ctx, 1, da, 1, modbus.InputRegister); !errors.Is(err, modbus.ErrIllegalDataAddress) {
 		t.Errorf("FC04 = %v, want the device's own refusal", err)
 	}
 

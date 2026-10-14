@@ -55,7 +55,7 @@ export function Toolbar({ polling, reading, scopeSize, offline, recording, onRea
         </Button>
       )}
       <Button className="ml-3" icon={<ExportIcon />} onClick={onExport} disabled={offline}>
-        Export snapshot
+        Export…
       </Button>
       {recording ? (
         <Button icon={<StopIcon />} onClick={onStopRecording} disabled={offline}>

@@ -295,6 +295,10 @@ func TestParseTarget(t *testing.T) {
 		" tcp://inverter.local ":     "tcp://inverter.local:502",
 		"rtuovertcp://10.0.0.5:4001": "rtuovertcp://10.0.0.5:4001",
 		"tcp://[::1]:502/":           "tcp://[::1]:502",
+		"tcp+tls://10.0.0.5":         "tcp+tls://10.0.0.5:502",
+		"rtu:///dev/ttyUSB0":         "rtu:///dev/ttyUSB0",
+		"rtu://COM3":                 "rtu://COM3",
+		"rtu:///dev/serial/by-id/usb-FTDI_USB-RS485-if00-port0": "rtu:///dev/serial/by-id/usb-FTDI_USB-RS485-if00-port0",
 	}
 	for in, want := range good {
 		tg, err := parseTarget(model.TargetConfig{URL: in})
@@ -302,10 +306,32 @@ func TestParseTarget(t *testing.T) {
 			t.Errorf("parseTarget(%q) = %+v, %v; want %s", in, tg, err, want)
 		}
 	}
+	// A serial line: defaults, and what was asked for.
+	tg, err := parseTarget(model.TargetConfig{URL: "rtu:///dev/ttyUSB0"})
+	if err != nil || tg.device != "/dev/ttyUSB0" || tg.url != nil || tg.baud != 9600 || tg.dataBits != 8 ||
+		tg.parity != modbus.ParityNone || tg.stopBits != 1 {
+		t.Errorf("serial defaults = %+v, %v", tg, err)
+	}
+	tg, err = parseTarget(model.TargetConfig{URL: "rtu://COM3", Serial: &model.SerialConfig{Baud: 19200, DataBits: 7, Parity: "even", StopBits: 2}})
+	if err != nil || tg.device != "COM3" || tg.baud != 19200 || tg.dataBits != 7 || tg.parity != modbus.ParityEven || tg.stopBits != 2 {
+		t.Errorf("serial settings = %+v, %v", tg, err)
+	}
+	if tg, _ := parseTarget(model.TargetConfig{URL: "rtu://COM3", Serial: &model.SerialConfig{Parity: "odd"}}); tg.parity != modbus.ParityOdd {
+		t.Errorf("odd parity = %+v", tg)
+	}
 	bad := []model.TargetConfig{
 		{URL: ""},
 		{URL: "http://10.0.0.5"},
-		{URL: "rtu:///dev/ttyUSB0"},
+		{URL: "rtu://"},
+		{URL: "rtu:///dev/tty USB0"},
+		{URL: "rtu:///dev/ttyUSB0?x=1"},
+		{URL: "rtu:///dev/ttyUSB0", Serial: &model.SerialConfig{Baud: 12}},
+		{URL: "rtu:///dev/ttyUSB0", Serial: &model.SerialConfig{DataBits: 5}},
+		{URL: "rtu:///dev/ttyUSB0", Serial: &model.SerialConfig{Parity: "mark"}},
+		{URL: "rtu:///dev/ttyUSB0", Serial: &model.SerialConfig{StopBits: 3}},
+		{URL: "tcp://10.0.0.5", Serial: &model.SerialConfig{Baud: 9600}},
+		{URL: "10.0.0.5:502"},
+		{URL: "udp://10.0.0.5:502"},
 		{URL: "tcp://user:secret@10.0.0.5:502"},
 		{URL: "tcp://10.0.0.5:502/path"},
 		{URL: "tcp://10.0.0.5:502?x=1"},
@@ -325,11 +351,11 @@ func TestParseTarget(t *testing.T) {
 		}
 	}
 	// A credential in a rejected URL must not be echoed.
-	_, err := parseTarget(model.TargetConfig{URL: "tcp://user:secret@10.0.0.5:502"})
+	_, err = parseTarget(model.TargetConfig{URL: "tcp://user:secret@10.0.0.5:502"})
 	if strings.Contains(err.Error(), "secret") {
 		t.Errorf("error leaks the credential: %v", err)
 	}
-	tg, err := parseTarget(model.TargetConfig{URL: "tcp://h", UnitID: 255, RegType: model.RegTypeInput, TimeoutMS: 250})
+	tg, err = parseTarget(model.TargetConfig{URL: "tcp://h", UnitID: 255, RegType: model.RegTypeInput, TimeoutMS: 250})
 	if err != nil || tg.regType != modbus.InputRegister || tg.timeout != 250*time.Millisecond || tg.unitID != 255 {
 		t.Errorf("parseTarget = %+v, %v", tg, err)
 	}

@@ -29,4 +29,8 @@ export class WebPlatform implements Platform {
   copyText(text: string): Promise<void> {
     return navigator.clipboard.writeText(text);
   }
+
+  reload(): void {
+    window.location.reload();
+  }
 }

@@ -28,7 +28,7 @@ We will acknowledge your report within 48 hours and aim to provide a fix or miti
 
 The Explorer never sends a Modbus write, a diagnostic or any request other than a register read (function codes 3 and 4). This is enforced, not a convention:
 
-- every Modbus client the engine creates carries a guard that stops any other function code before it is sent (`internal/readonly`);
+- every Modbus client the engine creates is restricted by go-modbus's function-code allow-list to those two codes: the client refuses anything else before it reaches the wire (`internal/readonly`);
 - the linter fails the build when non-test code calls a write or uses a device simulator (`.golangci.yml`);
 - a test captures the wire across every workflow and asserts that only function codes 3 and 4 appear.
 
@@ -38,9 +38,10 @@ No interface of the Explorer accepts a raw Modbus frame, a function code, a regi
 
 `sunspec-explorerd` listens on `127.0.0.1` only, and is still authenticated: other users of the gateway, and other pages in your browser, can reach a loopback port too.
 
-- **Token.** Every API request needs a bearer token, compared in constant time and accepted in the `Authorization` header only. It is created on the first start, stored in a file with mode 0600, never logged, and shown only by `sunspec-explorerd url` and in one line at startup. **Under systemd that line is in the journal**: restrict who can read it, or rotate the token (`sunspec-explorerd token rotate`) after the first start. A URL with `#token=` is a credential: do not paste it into chats or tickets.
+- **Token.** Every API request needs a bearer token, compared in constant time and accepted in the `Authorization` header only. It is created on the first start, stored in a file with mode 0600, never logged, and shown only by `sunspec-explorerd url` and, when the daemon was started from a terminal, in one line at startup. A daemon under systemd or in a container does not write it: its journal and its logs hold no token. A URL with `#token=` is a credential: do not paste it into chats or tickets.
 - **In the browser** the token arrives in the URL fragment, which is not sent to any server; the page removes it from the address bar and keeps it in memory only: no cookie, no local storage, no query string.
 - **Host check.** Requests that name another host are refused, which stops DNS-rebinding attacks from web pages. No CORS headers are sent; the page's content security policy allows its own origin only.
+- **Serial devices.** The daemon opens no serial device unless its operator names it (`--allow-serial`).
 - **Targets.** The daemon connects only to the networks it is allowed to (`--allow-target`; by default private and link-local ranges), so that a token holder cannot use a gateway to probe other networks. A host name is checked when the session is opened; a name that later resolves elsewhere is not re-checked.
 - **Other addresses.** Binding anything but loopback needs `--allow-remote-bind`. The listener is plain HTTP: on such an address the token is readable on the network. Use the SSH port forward instead.
 - **Data directory.** Created with mode 0700; a symbolic link, another owner or wider permissions are refused.

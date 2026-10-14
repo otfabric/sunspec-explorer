@@ -6,6 +6,7 @@ import type {
   PollState,
   RecordingInfo,
   Sample,
+  SerialPort,
   SessionInfo,
   SessionState,
   Snapshot,
@@ -15,7 +16,17 @@ import { mergeModel } from './merge';
 export type Selection = number | 'all';
 
 export interface ExplorerState {
+  /** The latest answer of the engine's health check. */
   health: Health | null;
+  /** The versions the engine reported first: what this page was served for. */
+  baseline: Pick<Health, 'version' | 'api_version'> | null;
+  /** The version the engine now reports, when it differs from the baseline. */
+  updatedTo: string | null;
+  /** The engine's clock minus this computer's, in milliseconds, as last estimated. */
+  skewMs: number;
+  skewDismissed: boolean;
+  /** Serial devices the engine may open. */
+  serialPorts: SerialPort[];
   session: SessionInfo | null;
   connecting: boolean;
   connectError: ServiceError | null;
@@ -55,7 +66,9 @@ export interface ExplorerState {
 }
 
 export type Action =
-  | { type: 'health'; health: Health }
+  | { type: 'health'; health: Health; skewMs: number }
+  | { type: 'dismissSkew' }
+  | { type: 'serialPorts'; ports: SerialPort[] }
   | { type: 'notice'; message: string | null }
   | { type: 'connecting' }
   | { type: 'connectFailed'; error: ServiceError }
@@ -82,6 +95,11 @@ const idlePolling: PollState = { active: false, interval_s: 5, model_indexes: []
 
 export const initialState: ExplorerState = {
   health: null,
+  baseline: null,
+  updatedTo: null,
+  skewMs: 0,
+  skewDismissed: false,
+  serialPorts: [],
   session: null,
   connecting: false,
   connectError: null,
@@ -106,6 +124,11 @@ export const initialState: ExplorerState = {
 const withoutSession = (state: ExplorerState): ExplorerState => ({
   ...initialState,
   health: state.health,
+  baseline: state.baseline,
+  updatedTo: state.updatedTo,
+  skewMs: state.skewMs,
+  skewDismissed: state.skewDismissed,
+  serialPorts: state.serialPorts,
   link: state.link,
   seenEvents: state.seenEvents,
   recording: state.recording,
@@ -277,8 +300,16 @@ function withEvent(current: ExplorerState, event: ExplorerEvent): ExplorerState 
 
 export function reduce(state: ExplorerState, action: Action): ExplorerState {
   switch (action.type) {
-    case 'health':
-      return { ...state, health: action.health };
+    case 'health': {
+      const { version, api_version } = action.health;
+      const baseline = state.baseline ?? { version, api_version };
+      const changed = baseline.version !== version || baseline.api_version !== api_version;
+      return { ...state, health: action.health, baseline, updatedTo: changed ? version : null, skewMs: action.skewMs };
+    }
+    case 'dismissSkew':
+      return { ...state, skewDismissed: true };
+    case 'serialPorts':
+      return { ...state, serialPorts: action.ports };
     case 'notice':
       return { ...state, notice: action.message, reading: false };
     case 'connecting':

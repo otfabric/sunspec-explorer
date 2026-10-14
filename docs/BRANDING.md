@@ -9,15 +9,8 @@ Slate base, teal "thread" accent, copper "wire" secondary. Dark is the default t
 ## 2. Tokens (copy into `frontend/src/styles/tokens.css`)
 
 ```css
-@import '@fontsource/barlow-semi-condensed/500.css';
-@import '@fontsource/barlow-semi-condensed/600.css';
-@import '@fontsource/barlow-semi-condensed/700.css';
-@import '@fontsource/ibm-plex-sans/400.css';
-@import '@fontsource/ibm-plex-sans/400-italic.css';
-@import '@fontsource/ibm-plex-sans/500.css';
-@import '@fontsource/ibm-plex-sans/600.css';
-@import '@fontsource/ibm-plex-mono/400.css';
-@import '@fontsource/ibm-plex-mono/500.css';
+/* Fonts: see frontend/src/styles/fonts.css (section 3). */
+@import './fonts.css';
 
 :root {
   --ot-font-display: 'Barlow Semi Condensed', 'Arial Narrow', Arial, sans-serif;
@@ -82,7 +75,7 @@ Theme switching is `data-theme` on `:root` (website behavior). Default dark; fol
 | Values, register addresses, raw hex, units, URLs, JSON, status chips | IBM Plex Mono 400/500 |
 | Column headers, mode badge, small captions | `.ot-label` |
 
-Fonts come from `@fontsource/*` npm packages (bundled woff2). Never load fonts from a CDN: the desktop app and the gateway must work offline.
+Fonts come from the `@fontsource/*` npm packages, bundled. `frontend/src/styles/fonts.css` declares them by hand: only the `latin` and `latin-ext` subsets, only woff2, with `unicode-range`, for the weights above (the packages' own stylesheets pull in every subset and a legacy `.woff` for each, which made the web bundle three times as large). Never load fonts from a CDN: the desktop app and the gateway must work offline.
 
 ## 4. Logo and app icon
 
@@ -94,7 +87,7 @@ Fonts come from `@fontsource/*` npm packages (bundled woff2). Never load fonts f
   - the favicon of the web build (`frontend/public/favicon.svg`);
   - the header, at 32 px, left of the product name.
 - **Header**: protocol icon, then the product name "**SunSpec Explorer**" as the main item (Barlow Semi Condensed 600, 1.45rem), then a small "powered by [weave mark, 16 px] **OT** Fabric" in the muted color (the weave mark swaps with the theme as above; wordmark at 14 px, "OT" at weight 700). The weave mark and the wordmark are the brand's signature; the product is what the header names.
-- Web build (served by the daemon): `<link rel="icon" href="/favicon.svg">`, `<meta name="theme-color" content="#17212B">` (the value the website uses), `<meta name="color-scheme" content="dark light">`, `<title>OT Fabric SunSpec Explorer</title>`. Same tokens and bundled fonts; no external requests (the CSP allows `'self'` only).
+- Web build (served by the daemon): `<link rel="icon" href="/favicon.svg">`, `<meta name="theme-color" content="#17212B">` (the value the website uses), `<meta name="color-scheme" content="dark light">`, `<title>SunSpec Explorer</title>` (the window title of the desktop application is the same). Same tokens and bundled fonts; no external requests (the CSP allows `'self'` only).
 
 ## 5. Icons
 

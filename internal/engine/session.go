@@ -50,12 +50,21 @@ type session struct {
 
 // open connects, detects, discovers and reads the device identity.
 func (e *Engine) open(ctx context.Context, t *target) (*session, error) {
-	client, err := modbus.New(modbus.Config{
+	conf := modbus.Config{
 		URL:         t.display,
 		Timeout:     t.timeout,
 		DialTimeout: t.timeout,
 		Metrics:     e.guard,
-	})
+		// Read-only: the client refuses everything but FC03 and FC04.
+		AllowedFunctionCodes: readonly.FunctionCodes(),
+	}
+	switch t.scheme {
+	case schemeRTU:
+		conf.Speed, conf.DataBits, conf.Parity, conf.StopBits = t.baud, t.dataBits, t.parity, t.stopBits
+	case schemeTLS:
+		conf.TLSClientCert, conf.TLSRootCAs = &e.opts.TLS.Certificate, e.opts.TLS.RootCAs
+	}
+	client, err := modbus.New(conf)
 	if err != nil {
 		return nil, service.Wrap(service.CodeInvalidArgument, err, "target %s", t.display)
 	}
@@ -185,15 +194,10 @@ func (s *session) probe(ctx context.Context) (base uint16, attempts []model.Prob
 		if ctx.Err() != nil {
 			return 0, attempts, ctx.Err()
 		}
-		var res *sunspec.DetectionResult
-		derr := readonly.Do(func() error {
-			var e error
-			res, e = sunspec.Detect(ctx, s.client, &sunspec.DiscoverOptions{
-				UnitID:        s.target.unitID,
-				RegType:       s.target.regType,
-				BaseAddresses: []uint16{b},
-			})
-			return e
+		res, derr := sunspec.Detect(ctx, s.client, &sunspec.DiscoverOptions{
+			UnitID:        s.target.unitID,
+			RegType:       s.target.regType,
+			BaseAddresses: []uint16{b},
 		})
 		if res != nil {
 			answered = true
@@ -241,16 +245,11 @@ func (s *session) discover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var dev *sunspec.Device
-	err = readonly.Do(func() error {
-		var e error
-		dev, e = sunspec.Discover(ctx, s.client, &sunspec.DiscoverOptions{
-			UnitID:        s.target.unitID,
-			RegType:       s.target.regType,
-			BaseAddresses: []uint16{base},
-			MaxModels:     s.target.maxModels,
-		})
-		return e
+	dev, err := sunspec.Discover(ctx, s.client, &sunspec.DiscoverOptions{
+		UnitID:        s.target.unitID,
+		RegType:       s.target.regType,
+		BaseAddresses: []uint16{base},
+		MaxModels:     s.target.maxModels,
 	})
 	if err != nil {
 		return &service.Error{
@@ -264,12 +263,7 @@ func (s *session) discover(ctx context.Context) error {
 	warnings := append([]string{}, dev.Discovery.Warnings...)
 	var identity *model.DeviceIdentity
 	if inst := dev.ModelByID(commonModelID); inst != nil {
-		var dm *sunspec.DecodedModel
-		rerr := readonly.Do(func() error {
-			var e error
-			dm, e = dev.ReadModel(ctx, *inst)
-			return e
-		})
+		dm, rerr := dev.ReadModel(ctx, *inst)
 		if rerr != nil {
 			warnings = append(warnings, fmt.Sprintf("device identity not read: %v", rerr))
 		} else {
@@ -326,7 +320,10 @@ func (s *session) read(ctx context.Context, indexes []int, full, includeRaw bool
 	transportFailures, answered := 0, 0
 	var lastErr error
 
-	for _, idx := range indexes {
+	for n, idx := range indexes {
+		if n > 0 && !s.pace(ctx) {
+			break
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -342,12 +339,7 @@ func (s *session) read(ctx context.Context, indexes []int, full, includeRaw bool
 			Warnings:     []string{},
 		}
 		t0 := time.Now()
-		var dm *sunspec.DecodedModel
-		err := readonly.Do(func() error {
-			var e error
-			dm, e = s.dev.ReadModel(ctx, inst)
-			return e
-		})
+		dm, err := s.dev.ReadModel(ctx, inst)
 		mr.ReadDurationMS = time.Since(t0).Milliseconds()
 
 		switch {
@@ -394,18 +386,30 @@ func (s *session) read(ctx context.Context, indexes []int, full, includeRaw bool
 	return res
 }
 
+// pace waits the engine's request delay between two models. It reports
+// false when ctx ended meanwhile.
+func (s *session) pace(ctx context.Context) bool {
+	delay := s.eng.opts.RequestDelay
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // headerGone reports whether the device no longer holds the header of inst
 // where discovery found it. A chain that became shorter does not answer a
 // model read with other data but with "illegal data address", which go-sunspec
 // reports as a plain read error; the header tells the two apart. The caller
 // holds the I/O token.
 func (s *session) headerGone(ctx context.Context, inst sunspec.ModelInstance) bool {
-	var regs []uint16
-	err := readonly.Do(func() error {
-		var e error
-		regs, e = s.client.ReadRegisters(ctx, s.dev.UnitID, inst.Header.StartAddress, 2, s.dev.RegType)
-		return e
-	})
+	regs, err := s.client.ReadRegisters(ctx, s.dev.UnitID, inst.Header.StartAddress, 2, s.dev.RegType)
 	if err != nil {
 		return errors.Is(err, modbus.ErrIllegalDataAddress)
 	}

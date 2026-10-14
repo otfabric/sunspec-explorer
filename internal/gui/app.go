@@ -159,21 +159,43 @@ func (a *App) DeleteRecording(ctx context.Context, recID string) error {
 	return a.svc.DeleteRecording(ctx, recID)
 }
 
+// ExportSession reads a session and renders it as CSV or as a device file;
+// the frontend saves the text with SaveFile.
+func (a *App) ExportSession(ctx context.Context, id, format string) (model.ExportFile, error) {
+	return a.svc.ExportSession(ctx, id, format)
+}
+
 // SaveRecording asks the user where to save a copy of a recording and writes
-// it there. It returns the chosen path, or "" when the user cancelled. The
-// frontend names the recording; the path comes from the native dialog.
-func (a *App) SaveRecording(ctx context.Context, recID string) (string, error) {
+// it there, as JSON Lines (format "" or "jsonl") or converted to CSV ("csv").
+// It returns the chosen path, or "" when the user cancelled. The frontend
+// names the recording; the path comes from the native dialog.
+func (a *App) SaveRecording(ctx context.Context, recID, format string) (string, error) {
 	app := application.Get()
 	if app == nil {
 		return "", service.Errorf(service.CodeInternal, "no application")
 	}
-	src, info, err := a.svc.OpenRecording(ctx, recID, 0)
+	var (
+		src  io.ReadCloser
+		info model.RecordingInfo
+		err  error
+		ext  = "jsonl"
+		kind = "JSON Lines"
+	)
+	switch format {
+	case "", "jsonl":
+		src, info, err = a.svc.OpenRecording(ctx, recID, 0)
+	case "csv":
+		ext, kind = "csv", "CSV"
+		src, info, err = a.svc.OpenRecordingCSV(ctx, recID)
+	default:
+		return "", service.Errorf(service.CodeInvalidArgument, "recording format %q: use jsonl or csv", format)
+	}
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = src.Close() }()
-	path, err := app.Dialog.SaveFile().SetFilename(filepath.Base(info.Name)+".jsonl").CanCreateDirectories(true).
-		AddFilter("JSON Lines", "*.jsonl").PromptForSingleSelection()
+	path, err := app.Dialog.SaveFile().SetFilename(filepath.Base(info.Name)+"."+ext).CanCreateDirectories(true).
+		AddFilter(kind, "*."+ext).PromptForSingleSelection()
 	if err != nil {
 		return "", service.Wrap(service.CodeInternal, err, "save dialog")
 	}

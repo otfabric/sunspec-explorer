@@ -31,7 +31,10 @@ const (
 	DefaultMaxRecordingBytes  = 64 << 20
 	DefaultMaxRecordingsBytes = 256 << 20
 	DefaultRotateBytes        = 16 << 20
-	DefaultMaxRecordingTime   = 7 * 24 * time.Hour
+	// DefaultMinFreeBytes is the free space recording leaves alone. In a
+	// temporary directory in RAM that space is the system's memory.
+	DefaultMinFreeBytes     = 64 << 20
+	DefaultMaxRecordingTime = 7 * 24 * time.Hour
 
 	recordingsDir = "recordings"
 	metaSuffix    = ".meta.json"
@@ -53,6 +56,10 @@ type RecordingLimits struct {
 	RotateBytes int64
 	// MaxDuration is the age at which a recording is stopped.
 	MaxDuration time.Duration
+	// MinFreeBytes is the free space of the data directory's file system
+	// below which no recording starts and the running ones are stopped.
+	// Negative switches the check off.
+	MinFreeBytes int64
 }
 
 func (l RecordingLimits) withDefaults() RecordingLimits {
@@ -67,6 +74,9 @@ func (l RecordingLimits) withDefaults() RecordingLimits {
 	}
 	if l.MaxDuration <= 0 {
 		l.MaxDuration = DefaultMaxRecordingTime
+	}
+	if l.MinFreeBytes == 0 {
+		l.MinFreeBytes = DefaultMinFreeBytes
 	}
 	return l
 }
@@ -89,6 +99,8 @@ type recStore struct {
 	temporary bool
 	limits    RecordingLimits
 	log       *slog.Logger
+	// free reports the free space under dir; tests replace it.
+	free func(dir string) (int64, bool)
 
 	// used is the size of all recordings together.
 	used atomic.Int64
@@ -118,7 +130,7 @@ func newRecStore(dataDir string, temporary bool, limits RecordingLimits, log *sl
 		return nil, err
 	}
 	st := &recStore{
-		dir: dir, location: dir, temporary: temporary, limits: limits.withDefaults(), log: log,
+		dir: dir, location: dir, temporary: temporary, limits: limits.withDefaults(), log: log, free: freeBytes,
 		recs: make(map[string]*recording),
 	}
 	entries, err := os.ReadDir(dir)
@@ -220,6 +232,16 @@ func (st *recStore) filePath(name string, index int) string {
 	return filepath.Join(st.dir, fmt.Sprintf("%s.%03d.jsonl", name, index))
 }
 
+// lowOnSpace reports whether the file system of the recordings has less free
+// space than the floor. A file system that does not tell is not low.
+func (st *recStore) lowOnSpace() (free int64, low bool) {
+	if st.limits.MinFreeBytes < 0 {
+		return 0, false
+	}
+	free, ok := st.free(st.dir)
+	return free, ok && free < st.limits.MinFreeBytes
+}
+
 // start creates a recording and writes its header.
 func (st *recStore) start(sessionID string, cfg model.RecordingConfig, header model.RecordingHeader) (*recording, error) {
 	name := cfg.Name
@@ -252,6 +274,11 @@ func (st *recStore) start(sessionID string, cfg model.RecordingConfig, header mo
 		return nil, service.Errorf(service.CodeLimitExceeded,
 			"the recordings use %.1f of %.1f MiB: save and delete some first",
 			float64(used)/(1<<20), float64(st.limits.MaxTotalBytes)/(1<<20))
+	}
+	if free, low := st.lowOnSpace(); low {
+		return nil, service.Errorf(service.CodeLimitExceeded,
+			"only %.1f MiB are free where recordings are kept (%s), and %.1f MiB are left alone: free some space, or choose another --data-dir",
+			float64(free)/(1<<20), st.location, float64(st.limits.MinFreeBytes)/(1<<20))
 	}
 
 	rec := &recording{
@@ -391,6 +418,11 @@ func (r *recording) sample(s *model.Sample) (info model.RecordingInfo, stopped b
 	if r.info.SizeBytes >= limits.MaxBytes || r.store.used.Load() >= limits.MaxTotalBytes ||
 		time.Since(r.info.StartedAt) >= limits.MaxDuration {
 		r.finish(model.StopLimit)
+		return r.info, true
+	}
+	if free, low := r.store.lowOnSpace(); low {
+		r.store.log.Warn("recording stopped: low on disk space", "name", r.info.Name, "free_bytes", free)
+		r.finish(model.StopDiskSpace)
 		return r.info, true
 	}
 	if r.sinceMeta++; r.sinceMeta >= metaEvery {

@@ -41,7 +41,7 @@ Approve with changes. Scope and layering are right: shared service, backend-side
 
 | Item | How to settle |
 |---|---|
-| ~~Whether go-modbus has a transport/PDU hook for a FC allow-list~~ | **Settled 2026-10-13**: it has none (v1.4.2). The guard sits on the `ClientMetrics.OnRequest` callback instead (`ARCHITECTURE.md` section 5). Still to decide: add a real allow-list option to go-modbus |
+| ~~Whether go-modbus has a transport/PDU hook for a FC allow-list~~ | **Settled 2026-10-13**: it has none (v1.4.2). The guard sits on the `ClientMetrics.OnRequest` callback instead (`ARCHITECTURE.md` section 5). go-modbus v1.5.0 (2026-10-14) added `Config.AllowedFunctionCodes`, and the Explorer uses it since v0.0.2 |
 | Wails v3 specifics: asset handler details, packaging behavior, exact beta version to pin | Create the M1 skeleton with `wails3 init` and run `wails3 doctor` on each target OS |
 | Static daemon on real gateways: Debian 11, 12, 13 on amd64, arm64, armv7 (targets confirmed by the user 2026-10-13) | Run acceptance test A12 on at least one real device per architecture |
 | WebKitGTK 6.0 on Debian 13, and any GUI viability on Debian 11 | `wails3 doctor` on each; only matters for Linux workstations, not gateways |
