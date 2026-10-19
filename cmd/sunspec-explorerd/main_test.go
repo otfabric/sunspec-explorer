@@ -208,7 +208,9 @@ func TestURLAndTokenLifecycle(t *testing.T) {
 		t.Errorf("restart log: %s", log.String())
 	}
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("stop: %v", err)
+	}
 }
 
 // The URL with the token is shown to a person at a terminal, and to nobody
@@ -385,7 +387,9 @@ func TestBindRules(t *testing.T) {
 		t.Errorf("remote bind with a foreign Host = %d", res.StatusCode)
 	}
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("stop: %v", err)
+	}
 }
 
 func TestCommandLine(t *testing.T) {
