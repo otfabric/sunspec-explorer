@@ -1,5 +1,33 @@
 # sunspec-explorer Releases
 
+## v0.0.4
+
+**Date:** 2026-10-29
+**Previous release:** v0.0.3
+
+## Summary
+
+Dependency update for SunSpec devices on Modbus RTU: go-serial v0.1.8 fixes two POSIX serial I/O bugs. No command or flag changes.
+
+### Dependencies
+
+- go-sunspec v0.6.0 → v0.6.1, go-modbus v1.5.0 → v1.7.2, go-serial v0.1.6 → v0.1.8.
+
+### Fixes (from go-serial v0.1.8)
+
+- `Write` no longer loses data when the serial port's output buffer is
+  full. It used to return a short count with a nil error (or `n == -1`
+  with `EAGAIN`); it now blocks until every byte is written.
+- `Read` works when the port's file descriptor is 1024 or higher. It used
+  to return a spurious `io.EOF` at once.
+
+### Other
+
+- go-modbus v1.5.0 → v1.7.2 also brings the go-modbus fixes of v1.5.1–v1.7.2; see go-modbus's release notes.
+- A test now checks the daemon's stop error; security contact is security@otfabric.io.
+
+---
+
 ## v0.0.3
 
 **Date:** 2026-10-14
