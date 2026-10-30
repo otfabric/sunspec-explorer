@@ -97,6 +97,7 @@ A session = target (URL, unit ID, register type, base addresses) + one open `*mo
 - Per model per cycle: status `ok|error|changed`, duration, error. A sample is always emitted, with `stale` flags per model computed from the last `ok` time (stale after 2 intervals).
 - Connection errors: close, reopen with exponential backoff (1 s to 30 s), emit status events; polling state persists.
 - `ErrModelChanged`: stop reading that session's models, re-run discovery, emit `discovery_changed`, resume. Recording gets an event line.
+- Chain check: a read only proves the models it reads, and a chain walk cut short by one bad answer looks finished (Modbus/TCP has no checksum, and a false end marker is an end marker). Every 60 s, in a poll cycle or a snapshot, a session compares every model header, the end marker and the device identity with the device. On a difference it walks the chain again, and emits `discovery_changed` only when the chain or the identity really differs. A chain cut by `max_models` has no end marker to compare.
 - Timestamps: `sample_time` = start of the first request, `read_duration_ms` = to end of the last. Samples are not atomic across models; documentation says so.
 
 ## 7. Data formats
@@ -218,8 +219,8 @@ Browser mode is the remote mode, and needs no desktop install: any current brows
 - Unit: engine pieces with the go-sunspec `testutil` fixture server and an in-process `sunspec.Server` in tests.
 - Contract: one suite, run against the engine and against the daemon's HTTP API (section 3).
 - Wire: function-code capture (A11).
-- Fault injection: chaos proxy for drops, delays, exceptions per address range (A6, A7).
-- Soak: 24 h polling + recording (A14).
+- Fault injection: seeded chaos proxy for drops, delays, corruption, exceptions and outages (A6, A7): `TestChaosPolling`.
+- Soak: polling + recording with memory, goroutine and descriptor checks (A14): `TestSoak`, up to 24 h by hand.
 - Daemon portability: static binary check, run in a GTK-less container, `go list -deps` guard (A12).
 - Frontend: component tests plus smoke tests in both themes for the Wails build and, with Playwright against a running daemon, the web build (A15).
 - Data directory hardening and systemd unit lint (A16).

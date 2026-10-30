@@ -197,6 +197,8 @@ func (s *session) cycle(ctx context.Context, cfg model.PollConfig, seq uint64) {
 				Message:   fmt.Sprintf("the model chain changed and re-discovery failed: %v", err),
 			})
 		}
+	} else if s.chainStale(ctx) {
+		s.recheck(ctx)
 	}
 }
 

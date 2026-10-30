@@ -22,3 +22,25 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       version: 0.0.0-ci
+
+  # The fuzz-time input of go-ci, which this repository cannot call (CI-002 in
+  # .otfabric/exceptions.yaml): every discovered target, briefly. Fuzzing runs
+  # on stable Go, as in go-ci (go.dev/issue/75804).
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: make fuzz FUZZTIME=10s
+      - name: Keep failing fuzz inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-corpus
+          path: "**/testdata/fuzz/"

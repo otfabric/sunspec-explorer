@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -682,5 +683,31 @@ func TestRecordingEndsWithSessionAndEngine(t *testing.T) {
 	_, lines := readRecording(t, e2, "b")
 	if last := lines[len(lines)-1]; last.Type != model.LineFooter || last.Reason != model.StopShutdown {
 		t.Errorf("last line = %+v", last)
+	}
+}
+
+// The sidecar's counts give way to the files: a delete does not walk a count
+// that was never true, and what is used is what is on disk.
+func TestRecordingSidecarCountsAreChecked(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), recordingsDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"info":{"state":"stopped","files":2000000000,"size_bytes":9000000000000000000}}`
+	if err := os.WriteFile(filepath.Join(dir, "x"+metaSuffix), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "x.000.jsonl"), []byte("ab\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := newRecStore(filepath.Dir(dir), true, RecordingLimits{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list := st.list(); len(list) != 1 || list[0].Files != 1 || list[0].SizeBytes != 3 || st.used.Load() != 3 {
+		t.Fatalf("recordings = %+v, used %d", list, st.used.Load())
+	}
+	if err := st.remove("x"); err != nil {
+		t.Fatal(err)
 	}
 }

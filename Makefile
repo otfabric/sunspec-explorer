@@ -1,4 +1,4 @@
-.PHONY: help all check test coverage coverage-html coverage-check coverage-clean fmt fmt-check vet lint lint-ci vuln \
+.PHONY: help all check test fuzz chaos soak coverage coverage-html coverage-check coverage-clean fmt fmt-check vet lint lint-ci vuln \
 	frontend frontend-install frontend-check build build-gui build-daemon build-daemon-all bundle-macos appicon winres docker docker-all docker-run dev clean
 
 help: ## This help
@@ -41,6 +41,14 @@ TEST_PKGS     := ./internal/engine/... ./internal/readonly/... ./internal/servic
 	./internal/api/... ./internal/web/... ./internal/daemon/... ./internal/settings/... ./cmd/sunspec-explorerd/...
 COVERAGE_MIN  := 90
 
+# How long each fuzz target runs, how many seeds the chaos test goes through and how long
+# the soak test polls. A chaos or soak failure logs its seed; replay it with
+# SUNSPEC_EXPLORER_CHAOS_SEED=<seed>. A failing fuzz input lands under testdata/fuzz/ in
+# its package: commit it with the fix.
+FUZZTIME         ?= 30s
+CHAOS_ITERATIONS ?= 25
+SOAKTIME         ?= 2m
+
 all: check build ## Run all checks and build
 
 check: fmt fmt-check vet lint lint-ci vuln test coverage-check frontend-check ## Run all checks (Go and frontend)
@@ -48,6 +56,22 @@ check: fmt fmt-check vet lint lint-ci vuln test coverage-check frontend-check ##
 test: ## Run the Go tests with the race detector
 	@echo "Running tests (race detector)"
 	@go test -count=1 -race ./...
+
+fuzz: ## Run every fuzz target in TEST_PKGS for FUZZTIME each (default 30s)
+	@for pkg in $(TEST_PKGS); do \
+		for target in $$(go test -list '^Fuzz' $$pkg | grep '^Fuzz'); do \
+			echo "Fuzzing $$pkg $$target (FUZZTIME=$(FUZZTIME))"; \
+			go test -run='^$$' -fuzz="^$$target\$$" -fuzztime=$(FUZZTIME) $$pkg || exit 1; \
+		done; \
+	done
+
+chaos: ## Run the chaos test under the race detector for CHAOS_ITERATIONS seeds (default 25)
+	@echo "Running chaos test ($(CHAOS_ITERATIONS) seeds)"
+	@SUNSPEC_EXPLORER_CHAOS_ITERATIONS=$(CHAOS_ITERATIONS) go test -count=1 -race -timeout=0 -run '^TestChaos' ./internal/engine
+
+soak: ## Run the soak test under the race detector for SOAKTIME (default 2m)
+	@echo "Running soak test (SOAKTIME=$(SOAKTIME))"
+	@SUNSPEC_EXPLORER_SOAK=$(SOAKTIME) go test -count=1 -race -timeout=0 -v -run '^TestSoak$$' ./internal/engine
 
 coverage: ## Run tests with coverage profile and text summary
 	@echo "Running coverage on $(TEST_PKGS)"
