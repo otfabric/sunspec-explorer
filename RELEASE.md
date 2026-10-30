@@ -1,5 +1,16 @@
 # sunspec-explorer Releases
 
+## v0.1.0
+
+**Date:** 2026-10-30
+**Previous release:** v0.0.4
+
+### Dependencies
+
+- `go-modbus` v1.7.2 → v1.10.0, `go-sunspec` v0.6.1 → v0.7.1.
+
+---
+
 ## v0.0.4
 
 **Date:** 2026-10-29
