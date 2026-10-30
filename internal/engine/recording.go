@@ -169,6 +169,9 @@ func (st *recStore) load(name string) (*recording, error) {
 	rec := &recording{store: st, info: meta.Info, rotate: meta.RotateBytes}
 	rec.info.ID, rec.info.Name = name, name
 	rec.info.Location, rec.info.Temporary = st.location, st.temporary
+	// The sidecar is what the list shows, but the files are what is there. A
+	// count it gets wrong would be walked by a delete and served by a download.
+	rec.measure()
 	if rec.info.State != model.RecordingRunning {
 		return rec, nil
 	}
@@ -181,22 +184,31 @@ func (st *recStore) load(name string) (*recording, error) {
 	return rec, nil
 }
 
+// measure sets the number of files and their size from what is on disk.
+func (r *recording) measure() {
+	r.info.Files, r.info.SizeBytes = 0, 0
+	for {
+		fi, err := os.Stat(r.store.filePath(r.info.Name, r.info.Files))
+		if err != nil {
+			return
+		}
+		r.info.Files++
+		r.info.SizeBytes += fi.Size()
+	}
+}
+
 // recount rebuilds the counters of a recording from its files. A truncated
 // last line, what a crash leaves, is ignored.
 func (r *recording) recount() {
-	r.info.Samples, r.info.Failures, r.info.SizeBytes, r.info.Files = 0, 0, 0, 0
+	r.info.Samples, r.info.Failures = 0, 0
 	var last time.Time
 	for i := 0; ; i++ {
 		f, err := os.Open(r.store.filePath(r.info.Name, i))
 		if err != nil {
 			break
 		}
-		r.info.Files++
-		if fi, err := f.Stat(); err == nil {
-			r.info.SizeBytes += fi.Size()
-			if fi.ModTime().After(last) {
-				last = fi.ModTime()
-			}
+		if fi, err := f.Stat(); err == nil && fi.ModTime().After(last) {
+			last = fi.ModTime()
 		}
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 64<<10), 16<<20)
