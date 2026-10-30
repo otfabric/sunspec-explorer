@@ -1,0 +1,7 @@
+go test fuzz v1
+string("tcp://[::%25\xab]")
+byte('\x01')
+string("")
+uint16(0)
+int(44)
+[]byte("0")
