@@ -1,0 +1,25 @@
+# Recorded exceptions to otfabric/engineering rules (docs/exceptions/ there).
+exceptions:
+  - rule: CI-002
+    scope: repository
+    justification: >-
+      The shared go-ci workflow cannot build this repository: the
+      Wails GUI needs cgo, a built frontend and platform webview libraries.
+      build.yml, called by ci.yml and release.yml, runs the same gates (vet,
+      race tests, make coverage-check, golangci-lint, govulncheck) and the
+      native-architecture builds, so CI proves the release path.
+    owner: bartvanbos
+    reviewed: "2026-10-30"
+    reconsider: "when go-ci can run after a frontend build with extra system packages"
+    ref: .github/workflows/build.yml
+  - rule: CI-004
+    scope: .github/workflows/build.yml
+    justification: >-
+      build.yml declares no workflow-level permissions on purpose: its image
+      job needs packages write only when release.yml calls it, and ci.yml
+      grants packages read. A block here would either remove that grant or
+      make the CI call fail at startup. Both callers declare least privilege.
+    owner: bartvanbos
+    reviewed: "2026-10-30"
+    reconsider: "when the image push moves out of build.yml"
+    ref: .github/workflows/release.yml

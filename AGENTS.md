@@ -2,6 +2,10 @@
 
 Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine, read-only guard, Wails shell (Local only), frontend (both builds), `sunspec-explorerd` with the HTTP/SSE API, embedded web UI, token lifecycle, `url` and `token rotate`, bind rules, the target allow-list, the systemd unit, the container image and the release workflow (first release: v0.0.1, a preview). v0.0.1 is released (with recording). Implemented for v0.0.2: serial (`rtu://`) and TLS (`tcp+tls://`) targets with the serial allow-list, CSV and device-file exports, request pacing, the clock-skew warning, the version handshake in the web UI, the published snapshot JSON Schema, a Windows icon, trimmed fonts. The free-space floor for recordings (R15) is in as well. **Not there yet**: installers, a real-browser test suite, the soak test. This file is the entry point for Claude Code and other agents. Read it fully, then the docs it points to, before writing code.
 
+## Organisation standards
+
+This repository follows **otfabric/engineering policy 1.0**, profile **application** (`.otfabric/policy.yaml`); local exceptions are in `.otfabric/exceptions.yaml`. Where this file and the organisation standards disagree, this file wins for this repository; say so in your report.
+
 ## What this is
 
 A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to a SunSpec device, discover its model chain, browse fully decoded points, read once or poll, and export or record measurements. It is built on [otfabric/go-sunspec](https://github.com/otfabric/go-sunspec) (which sits on otfabric/go-modbus). One Go engine runs in two places: in the desktop GUI's process (Local), or in a headless daemon on a gateway that serves the web UI to a browser through an SSH port forward (Remote). The GUI has no remote mode.
