@@ -24,8 +24,8 @@ github.com/otfabric/go-modbus v1.10.0 h1:AXbAoz/Fy1jp2JIWQhy1L/U2ZwwdnQ7pucyoRxY
 github.com/otfabric/go-modbus v1.10.0/go.mod h1:iM4a/kO8gN0L2uTXL1k575W0rwMBTsSwQ04Ko02QdOQ=
 github.com/otfabric/go-serial v0.1.8 h1:o/Pv8kJ7ZLIys5vFmB1Ng+KpppgcEPWkPHK5xzlvxEk=
 github.com/otfabric/go-serial v0.1.8/go.mod h1:TqbYpWWg6W+IuCLs8YM2cndlMAEaTyaKyUX6Z08gtq8=
-github.com/otfabric/go-sunspec v0.7.1 h1:487i89bYHLPT+x5SSOFs8NeHnhQ/vEjpC3FOLY7pb5Q=
-github.com/otfabric/go-sunspec v0.7.1/go.mod h1:RzPZN9Ssy6U7w15Fvv8asw2xlY02o2rgpdzX8P41GWE=
+github.com/otfabric/go-sunspec v0.8.0 h1:UEso3Gc8Ea9Z1nOTEzoEXqcUhyifIDZ0uL4bmZ7jFG4=
+github.com/otfabric/go-sunspec v0.8.0/go.mod h1:Igci1uW08UH1JJ0LFmRSAeOO+K1cMcmmMPTJMpNNVUM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 h1:1EYB5IzjZawrrnELUi78f9fPu57HuXjmddZPjrls/28=
