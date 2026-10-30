@@ -22,7 +22,7 @@ on:
 # Go: every job uses the current stable release ("go-version: stable"), not
 # the version in go.mod. go.mod names the oldest Go the code builds with; the
 # release binaries should carry the newest standard library with its security
-# fixes, and tools installed with "@latest" (govulncheck) need a current Go.
+# fixes, and govulncheck v1.9.0 needs Go 1.26 or later.
 env:
   GOWORK: "off"
   VERSION: ${{ inputs.version }}
@@ -92,8 +92,7 @@ jobs:
           args: ${{ env.GO_PKGS }}
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck $GO_PKGS
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 $GO_PKGS
 
   daemon:
     name: Daemon linux/${{ matrix.name }}
