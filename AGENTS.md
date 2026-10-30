@@ -16,6 +16,7 @@ A small, **read-only** desktop tool (Wails v3 + React/TypeScript) to connect to 
 2. `docs/ARCHITECTURE.md`: how: artifacts, layering, Service interface, API, data formats, security, milestones.
 3. `docs/BRANDING.md`: OT Fabric visual identity, tokens, icon rules, accessibility numbers.
 4. `docs/PROPOSAL-REVIEW.md`: why the original proposal was changed, what was verified, what is still unverified.
+5. `TESTING.md`: how to run each test tier. `docs/adr/`: the foundational decisions and why.
 
 ## Decisions that are settled (do not relitigate without asking the user)
 
