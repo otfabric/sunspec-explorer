@@ -9,6 +9,16 @@
 
 - `go-modbus` v1.7.2 → v1.10.0, `go-sunspec` v0.6.1 → v0.7.1.
 
+### Fixes
+
+- A target with an invalid host, such as `tcp://::` or an IPv6 zone that a URL cannot hold, is refused. It used to be accepted and stored as a URL that could not be read back (`FuzzParseTarget`, `b40ca1077abc80fc`, `551db88b8b6ed6fe`).
+- The URL of a daemon bound to an IPv6 address with a zone can be opened: `sunspec-explorerd url` printed the zone unescaped (`FuzzListenAddress`).
+- The list of recordings takes the number of files and their size from the disk, not from the sidecar: a damaged sidecar could make a delete walk up to its claimed number of files and spoil the total of what recordings use (`FuzzRecordingStore`).
+
+### Testing
+
+- Fuzz targets for everything read from a device, a client, a flag or a file; a seeded chaos test around polling; a soak test; a nightly workflow. See `TESTING.md`.
+
 ---
 
 ## v0.0.4

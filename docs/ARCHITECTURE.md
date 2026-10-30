@@ -218,8 +218,8 @@ Browser mode is the remote mode, and needs no desktop install: any current brows
 - Unit: engine pieces with the go-sunspec `testutil` fixture server and an in-process `sunspec.Server` in tests.
 - Contract: one suite, run against the engine and against the daemon's HTTP API (section 3).
 - Wire: function-code capture (A11).
-- Fault injection: chaos proxy for drops, delays, exceptions per address range (A6, A7).
-- Soak: 24 h polling + recording (A14).
+- Fault injection: seeded chaos proxy for drops, delays, corruption, exceptions and outages (A6, A7): `TestChaosPolling`.
+- Soak: polling + recording with memory, goroutine and descriptor checks (A14): `TestSoak`, up to 24 h by hand.
 - Daemon portability: static binary check, run in a GTK-less container, `go list -deps` guard (A12).
 - Frontend: component tests plus smoke tests in both themes for the Wails build and, with Playwright against a running daemon, the web build (A15).
 - Data directory hardening and systemd unit lint (A16).

@@ -1,6 +1,6 @@
 # OT Fabric SunSpec Explorer: agent handoff
 
-Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine, read-only guard, Wails shell (Local only), frontend (both builds), `sunspec-explorerd` with the HTTP/SSE API, embedded web UI, token lifecycle, `url` and `token rotate`, bind rules, the target allow-list, the systemd unit, the container image and the release workflow (first release: v0.0.1, a preview). v0.0.1 is released (with recording). Implemented for v0.0.2: serial (`rtu://`) and TLS (`tcp+tls://`) targets with the serial allow-list, CSV and device-file exports, request pacing, the clock-skew warning, the version handshake in the web UI, the published snapshot JSON Schema, a Windows icon, trimmed fonts. The free-space floor for recordings (R15) is in as well. **Not there yet**: installers, a real-browser test suite, the soak test. This file is the entry point for Claude Code and other agents. Read it fully, then the docs it points to, before writing code.
+Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine, read-only guard, Wails shell (Local only), frontend (both builds), `sunspec-explorerd` with the HTTP/SSE API, embedded web UI, token lifecycle, `url` and `token rotate`, bind rules, the target allow-list, the systemd unit, the container image and the release workflow (first release: v0.0.1, a preview). v0.0.1 is released (with recording). Implemented for v0.0.2: serial (`rtu://`) and TLS (`tcp+tls://`) targets with the serial allow-list, CSV and device-file exports, request pacing, the clock-skew warning, the version handshake in the web UI, the published snapshot JSON Schema, a Windows icon, trimmed fonts. The free-space floor for recordings (R15) is in as well. **Not there yet**: installers, a real-browser test suite. This file is the entry point for Claude Code and other agents. Read it fully, then the docs it points to, before writing code.
 
 ## Organisation standards
 
@@ -62,7 +62,7 @@ internal/gui/              Wails service binding, event forwarding to the window
 internal/web/              static handler for the web UI (SPA fallback, CSP), used by the daemon (never imports Wails)
 frontend/                  React + TypeScript + Tailwind v4, tokens from docs/BRANDING.md; two builds: dist/wails and dist/web; embed.go embeds both
 packaging/                 systemd unit, Dockerfile of the daemon image, later nfpm/AppImage config and signing notes
-tests/                     soak tests, fixtures (not there yet); contract, auth, Host, SSE and wire tests live in internal/api and internal/engine
+tests/                     fixtures (not there yet); contract, auth, Host, SSE, wire, chaos and soak tests live in internal/api and internal/engine
 docs/                      the four documents above, REMOTE-USE.md, schema/ (JSON Schema of the snapshot export)
 ```
 
