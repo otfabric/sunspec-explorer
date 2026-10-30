@@ -97,6 +97,7 @@ A session = target (URL, unit ID, register type, base addresses) + one open `*mo
 - Per model per cycle: status `ok|error|changed`, duration, error. A sample is always emitted, with `stale` flags per model computed from the last `ok` time (stale after 2 intervals).
 - Connection errors: close, reopen with exponential backoff (1 s to 30 s), emit status events; polling state persists.
 - `ErrModelChanged`: stop reading that session's models, re-run discovery, emit `discovery_changed`, resume. Recording gets an event line.
+- Chain check: a read only proves the models it reads, and a chain walk cut short by one bad answer looks finished (Modbus/TCP has no checksum, and a false end marker is an end marker). Every 60 s, in a poll cycle or a snapshot, a session compares every model header, the end marker and the device identity with the device. On a difference it walks the chain again, and emits `discovery_changed` only when the chain or the identity really differs. A chain cut by `max_models` has no end marker to compare.
 - Timestamps: `sample_time` = start of the first request, `read_duration_ms` = to end of the last. Samples are not atomic across models; documentation says so.
 
 ## 7. Data formats

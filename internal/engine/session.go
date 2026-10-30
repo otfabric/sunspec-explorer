@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,6 +39,12 @@ type session struct {
 
 	io  chan struct{}
 	dev *sunspec.Device
+	// endAt is where discovery found the end marker, and hasEnd whether it
+	// found one: a walk can be cut by MaxModels. chainCheckAt is when the
+	// chain is next compared with the device. All three go with dev.
+	endAt        uint16
+	hasEnd       bool
+	chainCheckAt time.Time
 
 	mu         sync.Mutex
 	info       model.SessionInfo
@@ -277,6 +284,11 @@ func (s *session) discover(ctx context.Context) error {
 	}
 
 	s.dev = dev
+	s.endAt, s.hasEnd = 0, false
+	if hdrs := dev.Discovery.Raw.Models; len(hdrs) > 0 && hdrs[len(hdrs)-1].IsEndModel {
+		s.endAt, s.hasEnd = hdrs[len(hdrs)-1].StartAddress, true
+	}
+	s.chainCheckAt = time.Now().Add(s.backoffUnit(chainCheckEvery))
 	s.mu.Lock()
 	s.info.Target.BaseAddress = dev.Discovery.BaseAddress
 	s.info.Target.RegType = regTypeName(dev.Discovery.RegType)
@@ -303,6 +315,79 @@ func (s *session) rediscover(ctx context.Context) error {
 	s.eng.log.Info("discovery done", "session", s.id, "models", len(info.Models))
 	s.eng.hub.publish(model.Event{Kind: model.EventDiscoveryChanged, SessionID: s.id, Session: &info})
 	return nil
+}
+
+// chainStale reports whether the device no longer holds the chain discovery
+// found, at most once per chainCheckEvery. The caller holds the I/O token.
+//
+// A read tells that only about the models it reads. A chain walk that one bad
+// answer cut short looks finished, because Modbus/TCP has no checksum and a
+// false end marker is an end marker: every model it found reads well, and the
+// rest of the chain would stay out of sight. So does a static model that is
+// read once, or a model outside an explicit poll selection, and the identity,
+// which is read with discovery only. This compares every header, the end
+// marker and the identity with the device. A read that fails says nothing:
+// the poll cycle accounts for that.
+func (s *session) chainStale(ctx context.Context) bool {
+	if time.Now().Before(s.chainCheckAt) {
+		return false
+	}
+	s.chainCheckAt = time.Now().Add(s.backoffUnit(chainCheckEvery))
+	for n, inst := range s.dev.Discovery.Models {
+		if n > 0 && !s.pace(ctx) {
+			return false
+		}
+		if s.headerGone(ctx, inst) {
+			return true
+		}
+	}
+	if s.hasEnd && s.pace(ctx) {
+		regs, err := s.client.ReadRegisters(ctx, s.dev.UnitID, s.endAt, 2, s.dev.RegType)
+		if err != nil && errors.Is(err, modbus.ErrIllegalDataAddress) {
+			return true
+		}
+		if err == nil && (len(regs) != 2 || regs[0] != sunspec.SunSpecEndModelID || regs[1] != sunspec.SunSpecEndModelLength) {
+			return true
+		}
+	}
+	if inst := s.dev.ModelByID(commonModelID); inst != nil && s.pace(ctx) {
+		if dm, err := s.dev.ReadModel(ctx, *inst); err == nil {
+			return !sameIdentity(identityOf(dm), s.snapshotInfo().Device)
+		}
+	}
+	return false
+}
+
+func sameIdentity(a, b *model.DeviceIdentity) bool {
+	return a == b || (a != nil && b != nil && *a == *b)
+}
+
+// recheck walks the chain again after chainStale raised a doubt, which a bad
+// answer can do too: it reports whether the chain or the identity differs from
+// what the session had, and only then announces it. On failure the session keeps its
+// chain and the next check tries again. The caller holds the I/O token.
+func (s *session) recheck(ctx context.Context) bool {
+	before := s.snapshotInfo()
+	s.mu.Lock()
+	lastOK := s.lastOK
+	s.mu.Unlock()
+	if err := s.discover(ctx); err != nil {
+		if ctx.Err() == nil {
+			s.eng.log.Warn("chain check: discovery failed", "session", s.id, "error", err)
+		}
+		return false
+	}
+	info := s.snapshotInfo()
+	if slices.Equal(before.Models, info.Models) && sameIdentity(before.Device, info.Device) {
+		s.mu.Lock()
+		s.lastOK = lastOK
+		s.mu.Unlock()
+		return false
+	}
+	s.record(model.EventDiscoveryChanged, "the model chain was discovered again", info.Models)
+	s.eng.log.Warn("the model chain differs from what discovery found", "session", s.id, "models", len(info.Models))
+	s.eng.hub.publish(model.Event{Kind: model.EventDiscoveryChanged, SessionID: s.id, Session: &info})
+	return true
 }
 
 // readResult is the outcome of reading a set of models.
@@ -491,6 +576,8 @@ func (s *session) snapshot(ctx context.Context, req model.SnapshotRequest) (mode
 		} else {
 			warnings = append(warnings, "the device was discovered again: read once more")
 		}
+	} else if s.chainStale(ctx) && s.recheck(ctx) {
+		warnings = append(warnings, "the model chain changed since discovery and the device was discovered again: read once more")
 	}
 
 	info := s.snapshotInfo()

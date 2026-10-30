@@ -41,6 +41,10 @@ const (
 
 	backoffMin = 1 * time.Second
 	backoffMax = 30 * time.Second
+
+	// chainCheckEvery is how often a session compares the model chain with
+	// the device: a handful of reads, see session.chainStale.
+	chainCheckEvery = 60 * time.Second
 )
 
 // Options configures an Engine. The zero value selects the defaults.

@@ -582,9 +582,9 @@ func checkRecording(t testing.TB, e *Engine, sch *schemas, info model.RecordingI
 //     them return within a fixed bound, and so do stopping and closing.
 //  5. An outage is seen: the session goes to reconnecting, and while nothing
 //     answers the requests stay spaced by the timeout and the backoff.
-//  6. It heals by itself: once the faults end the session is connected and
-//     delivers samples in which every model is ok, with the device's real
-//     chain after at most one re-discovery, without a new session.
+//  6. It heals by itself: once the faults end the session is connected,
+//     delivers samples in which every model is ok and holds the device's real
+//     chain, with no Rediscover and no new session.
 //  7. The recording survives all of it: every line is complete and matches the
 //     published schema, and the footer and the counters agree with the lines.
 //  8. Nothing is left behind: goroutines and descriptors are back to where
@@ -732,17 +732,12 @@ func chaosRun(t *testing.T, seed uint64) {
 	}
 	waitUntil(t, "the session to heal", bound, healed)
 
-	// A corrupted chain walk can have ended early, and then nothing tells a
-	// reader the chain is short: re-discovery puts it right.
-	bounded(t, "Rediscover", bound, func() {
-		st, err := e.Rediscover(ctx, info.ID)
-		if err != nil {
-			t.Errorf("Rediscover after the faults: %v", err)
-			return
-		}
-		if !sameChain(st.Models, want) {
-			t.Errorf("chain after healing = %+v, want %+v", st.Models, want)
-		}
+	// Nobody calls Rediscover: a chain that a bad answer cut short, or an
+	// identity that was misread, is put right by the session's chain check.
+	waitUntil(t, "the real chain and identity", bound, func() bool {
+		st, err := e.State(ctx, info.ID)
+		return err == nil && sameChain(st.Session.Models, want) &&
+			st.Session.Device != nil && st.Session.Device.Serial == "SN-0001"
 	})
 	bounded(t, "a snapshot after the faults", bound, func() {
 		snap, err := e.Snapshot(ctx, info.ID, model.SnapshotRequest{})
