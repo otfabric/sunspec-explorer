@@ -224,7 +224,7 @@ func TestSerialTargets(t *testing.T) {
 }
 
 // selfSigned writes a self-signed certificate and its key as PEM files.
-func selfSigned(t *testing.T, dir, name string) (certFile, keyFile string) {
+func selfSigned(t testing.TB, dir, name string) (certFile, keyFile string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -531,5 +531,19 @@ func TestRecordingCSV(t *testing.T) {
 	}
 	if _, _, err := newEngine(t, tick).OpenRecordingCSV(ctx, "csv"); service.CodeOf(err) != service.CodeNotAllowed {
 		t.Errorf("without a data directory = %v", err)
+	}
+}
+
+// A host that cannot be written back into a URL is refused: the target would
+// be stored and shown as something nobody can dial.
+func TestTargetHostSurvivesStorage(t *testing.T) {
+	for _, raw := range []string{"tcp://::", "tcp://[::%25\xab]", "tcp://1:2:3"} {
+		if _, err := parseTarget(model.TargetConfig{URL: raw}); service.CodeOf(err) != service.CodeInvalidArgument {
+			t.Errorf("parseTarget(%q) = %v, want invalid_argument", raw, err)
+		}
+	}
+	tgt, err := parseTarget(model.TargetConfig{URL: "tcp://[fe80::1%25eth0]:502"})
+	if err != nil || tgt.display != "tcp://[fe80::1%25eth0]:502" {
+		t.Errorf("IPv6 with a zone: %+v, %v", tgt, err)
 	}
 }

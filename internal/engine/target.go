@@ -4,6 +4,7 @@ package engine
 
 import (
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -96,6 +97,13 @@ func parseTarget(cfg model.TargetConfig) (*target, error) {
 		if host == "" {
 			return invalid("target URL has no host")
 		}
+		// Only an IPv6 address has a colon in it. Anything else that got here
+		// would be stored as a URL nobody can read back or dial.
+		if strings.Contains(host, ":") {
+			if _, err := netip.ParseAddr(host); err != nil {
+				return invalid("target URL has an invalid host %q", host)
+			}
+		}
 		port := u.Port()
 		if port == "" {
 			port = defaultPort
@@ -105,6 +113,11 @@ func parseTarget(cfg model.TargetConfig) (*target, error) {
 		}
 		t.url = &url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}
 		t.display = t.url.String()
+		// The stored form must say the same thing: the allow-list looks at
+		// t.url, and the client dials what it parses out of t.display.
+		if back, err := url.Parse(t.display); err != nil || back.Hostname() != host || back.Port() != port {
+			return invalid("target URL has an invalid host %q", host)
+		}
 		if cfg.Serial != nil {
 			return invalid("serial settings apply to rtu:// targets only")
 		}
