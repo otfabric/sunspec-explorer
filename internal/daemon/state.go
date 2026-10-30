@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -98,7 +99,10 @@ func AccessFor(listen, token, hostname string) (Access, error) {
 	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
 		shown = "127.0.0.1"
 	}
-	a := Access{URL: fmt.Sprintf("http://%s/#token=%s", net.JoinHostPort(shown, port), token)}
+	// url.URL escapes what a host may hold and a URL may not, such as the zone
+	// of an IPv6 link-local address.
+	page := url.URL{Scheme: "http", Host: net.JoinHostPort(shown, port), Path: "/", Fragment: "token=" + token}
+	a := Access{URL: page.String()}
 	if isLoopbackHost(host) && hostname != "" {
 		a.SSH = fmt.Sprintf("ssh -N -L %s:127.0.0.1:%s <user>@%s", port, port, hostname)
 	}

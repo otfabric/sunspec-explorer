@@ -400,3 +400,14 @@ func TestTargetAllowList(t *testing.T) {
 		t.Errorf("unknown name: %v", err)
 	}
 }
+
+// The URL of a daemon on a link-local address is one a browser can open.
+func TestAccessForZone(t *testing.T) {
+	a, err := AccessFor("[fe80::1%eth0]:8765", "tok", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://[fe80::1%25eth0]:8765/#token=tok"; a.URL != want {
+		t.Errorf("URL = %q, want %q", a.URL, want)
+	}
+}
