@@ -39,6 +39,14 @@ func FuzzRequest(f *testing.F) {
 		{"DELETE", "/api/v1/recordings/..%2f..%2fx", "localhost", good, "", ""},
 		{"GET", "/api/v1", "localhost", good, "", ""},
 		{"TRACE", "/x", "localhost", "", "", ""},
+		{"GET", "/api/v1/health", "LOCALHOST:8765", good, "", ""},
+		{"GET", "/api/v1/health", "[::1]", good, "", ""},
+		{"GET", "/api/v1/health", "::1", good, "", ""},
+		{"GET", "/api/v1/health", "]localhost", good, "", ""},
+		{"GET", "/api/v1/health", "[localhost", good, "", ""},
+		{"GET", "/api/v1/health", "[localhost]", good, "", ""},
+		{"GET", "/api/v1/health", "[::1]x", good, "", ""},
+		{"GET", "/api/v1/health", "localhost:[", good, "", ""},
 	} {
 		f.Add(c.method, c.path, c.host, c.auth, c.rng, []byte(c.body))
 	}
@@ -98,15 +106,25 @@ func goodToken(auth string) bool {
 	return ok && strings.EqualFold(scheme, "Bearer") && strings.TrimSpace(token) == testToken
 }
 
+// hostAllowed says what the handler must decide, written out from the grammar
+// of a Host header and not from the handler's code: a host, then an optional
+// port. An IPv6 literal goes between one pair of brackets, which nothing else
+// may use. The one tolerance is ::1 without brackets.
 func hostAllowed(hostport string) bool {
-	host := strings.ToLower(hostport)
-	if i := strings.LastIndex(host, ":"); i >= 0 && !strings.HasSuffix(host, "]") && strings.Count(host, ":") == 1 {
-		host = host[:i]
-	}
-	if strings.HasPrefix(host, "[") {
-		if i := strings.Index(host, "]"); i > 0 {
-			host = host[1:i]
+	host, port := strings.ToLower(hostport), ""
+	if rest, ok := strings.CutPrefix(host, "["); ok {
+		var closed bool
+		if host, port, closed = strings.Cut(rest, "]"); !closed {
+			return false
 		}
+		if port != "" && port[0] != ':' {
+			return false
+		}
+		port = strings.TrimPrefix(port, ":")
+		return host == "::1" && !strings.ContainsAny(port, ":[]")
 	}
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	if strings.Count(host, ":") == 1 {
+		host, port, _ = strings.Cut(host, ":")
+	}
+	return (host == "127.0.0.1" || host == "localhost" || host == "::1") && !strings.ContainsAny(port, "[]")
 }
