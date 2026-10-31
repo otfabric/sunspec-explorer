@@ -102,7 +102,13 @@ func TestHostCheck(t *testing.T) {
 	ui := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ui") })
 	d := newDaemon(t, engine.Options{}, api.Options{UI: ui})
 
-	for _, host := range []string{"evil.example", "evil.example:80", "127.0.0.1.evil.example", "192.168.1.10:8765", "localhost.evil.example"} {
+	for _, host := range []string{
+		"evil.example", "evil.example:80", "127.0.0.1.evil.example", "192.168.1.10:8765", "localhost.evil.example",
+		// Not well formed. Stray brackets used to be trimmed off, which turned
+		// these into a name the daemon answers to.
+		"]loCAlhost", "]localhost", "[localhost", "localhost]", "]]localhost[[", "[localhost]", "[localhost]:8765",
+		"[127.0.0.1]", "[[::1]]", "[::1", "::1]", "[::1]x", "[::1]:80:80", "localhost:[", "localhost:80]",
+	} {
 		for _, path := range []string{"/api/v1/health", "/", "/index.html"} {
 			status, _, body := d.request(t, "GET", path, testToken, "", func(r *http.Request) { r.Host = host })
 			if status != http.StatusForbidden || errorCode(t, body) != service.CodeUnauthorized {
@@ -111,7 +117,7 @@ func TestHostCheck(t *testing.T) {
 		}
 	}
 	// The port is free: an SSH forward may use another local port.
-	for _, host := range []string{"127.0.0.1", "127.0.0.1:9999", "localhost:8765", "LOCALHOST", "[::1]:8765"} {
+	for _, host := range []string{"127.0.0.1", "127.0.0.1:9999", "localhost:8765", "LOCALHOST", "loCAlhost:8765", "[::1]", "[::1]:8765"} {
 		if status, _, _ := d.request(t, "GET", "/api/v1/health", testToken, "", func(r *http.Request) { r.Host = host }); status != http.StatusOK {
 			t.Errorf("Host %s = %d", host, status)
 		}

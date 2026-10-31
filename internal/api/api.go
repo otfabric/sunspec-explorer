@@ -131,13 +131,20 @@ func New(svc service.Service, opts Options) http.Handler {
 	})
 }
 
+// hostAllowed reports whether a Host header names a host the daemon answers
+// to. Brackets belong around an IPv6 literal and nowhere else, as a pair: a
+// header that is not well formed names no host.
 func (s *server) hostAllowed(hostport string) bool {
-	host := hostport
+	host, bracketed := hostport, strings.HasPrefix(hostport, "[")
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
+	} else if bracketed && strings.HasSuffix(hostport, "]") {
+		host = hostport[1 : len(hostport)-1]
 	}
-	host = strings.ToLower(strings.Trim(host, "[]"))
-	return s.hosts[host]
+	if bracketed && !strings.Contains(host, ":") {
+		return false
+	}
+	return s.hosts[strings.ToLower(host)]
 }
 
 // authorized compares the bearer token in constant time. The token is only

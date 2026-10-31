@@ -47,6 +47,8 @@ No hardware: Go tests run against go-sunspec's `testutil` fixture server or an i
 
 `TestSoak` (`internal/engine/soak_test.go`) polls and records through the same proxy at a low fault rate, rolling recordings over, and compares live heap, goroutines and descriptors late in the run with early in it. `SUNSPEC_EXPLORER_SOAK=<duration>` runs it.
 
+Both end by comparing goroutines and descriptors with what the test started with, and a failure lists the descriptors of both moments. The baseline is taken after the runtime's network poller has started: it holds descriptors for the life of the process and starts with the first timer or socket. `go test`'s timeout is such a timer, so a process run with `-timeout=0`, as `make chaos` and `make soak` do, has not started it yet. `TestLeakCheckColdProcess` covers that case and `TestLeakCheckFindsLeaks` shows that the check can fail.
+
 ## Not automated here
 
 The 24-hour soak of A14 at a 1 s interval: `TestSoak` compresses it, polling at 2 ms, and a hosted runner gives it 5 hours at most (`nightly.yml`, input `soak-time`). A real 24-hour run is `make soak SOAKTIME=24h` on a machine of your own.

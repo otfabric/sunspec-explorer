@@ -13,9 +13,11 @@ import (
 	"math/rand/v2"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -313,14 +315,32 @@ func chaosSeeds(t *testing.T) []uint64 {
 type baseline struct {
 	goroutines int
 	files      int
+	open       []string
+	patience   time.Duration // how long what is left may take to go
 }
 
+// takeBaseline measures what a test starts with. The runtime's network poller
+// comes first: it holds descriptors of its own (epoll and an eventfd on Linux,
+// a kqueue on macOS) for the life of the process and starts with the first
+// timer or socket. In a process that has had neither, those would count
+// against the test that happens to start it. go test sets such a timer for its
+// timeout, so only -timeout=0 (make chaos, make soak) shows this.
 func takeBaseline() baseline {
-	return baseline{goroutines: runtime.NumGoroutine(), files: openFiles()}
+	startPoller()
+	return baseline{goroutines: runtime.NumGoroutine(), files: openFiles(), open: descriptors(), patience: 5 * time.Second}
+}
+
+// startPoller makes sure that the runtime's network poller is running.
+func startPoller() {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	_ = l.Close()
 }
 
 // openFiles counts this process's open descriptors, or -1 where that cannot be
-// told.
+// told. Reading the directory takes a descriptor, which is part of every count.
 func openFiles() int {
 	entries, err := os.ReadDir("/dev/fd")
 	if err != nil {
@@ -329,12 +349,29 @@ func openFiles() int {
 	return len(entries)
 }
 
+// descriptors names the open descriptors, as far as the system says what they
+// are: with the bare counts a leak report would not say what leaked.
+func descriptors() []string {
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if target, err := os.Readlink("/dev/fd/" + name); err == nil {
+			name += "=" + target
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 // check fails when goroutines or descriptors outlive what started them. They
-// get a moment: a goroutine that was told to stop may not have run yet, and a
-// closed socket's poller entry goes with the next garbage collection.
+// get a moment: a goroutine that was told to stop may not have run yet.
 func (b baseline) check(t testing.TB) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(b.patience)
 	for {
 		g, f := runtime.NumGoroutine(), openFiles()
 		if g <= b.goroutines && f <= b.files {
@@ -343,10 +380,106 @@ func (b baseline) check(t testing.TB) {
 		if time.Now().After(deadline) {
 			buf := make([]byte, 1<<20)
 			buf = buf[:runtime.Stack(buf, true)]
-			t.Fatalf("leak: %d goroutines (%d before), %d descriptors (%d before)\n%s", g, b.goroutines, f, b.files, buf)
+			t.Fatalf("leak: %d goroutines (%d before), %d descriptors (%d before)\nbefore: %v\nnow: %v\n%s",
+				g, b.goroutines, f, b.files, b.open, descriptors(), buf)
 		}
 		runtime.GC()
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// fatalRecorder stands in for a test whose failure is the expected result.
+type fatalRecorder struct {
+	testing.TB
+	failed string
+}
+
+func (r *fatalRecorder) Fatalf(format string, args ...any) {
+	r.failed = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+// The leak check itself: what a test leaves behind is found, whichever kind it
+// is. A leak check that cannot fail would pass.
+func TestLeakCheckFindsLeaks(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files bool
+		leak  func(t *testing.T) (release func())
+	}{
+		{name: "goroutine", leak: func(*testing.T) func() {
+			stop, stopped := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(stopped)
+				<-stop
+			}()
+			return func() {
+				close(stop)
+				<-stopped
+			}
+		}},
+		{name: "file", files: true, leak: func(t *testing.T) func() {
+			f, err := os.CreateTemp(t.TempDir(), "leak")
+			if err != nil {
+				t.Error(err)
+				return func() {}
+			}
+			return func() { _ = f.Close() }
+		}},
+		{name: "listener", files: true, leak: func(t *testing.T) func() {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Error(err)
+				return func() {}
+			}
+			return func() { _ = l.Close() }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.files && openFiles() < 0 {
+				t.Skip("this system does not list descriptors")
+			}
+			rec := &fatalRecorder{TB: t}
+			done := make(chan struct{})
+			go func() { // a goroutine of its own, because check ends in Goexit
+				defer close(done)
+				base := takeBaseline()
+				base.patience = 100 * time.Millisecond
+				defer tc.leak(t)()
+				base.check(rec)
+			}()
+			<-done
+			if !strings.Contains(rec.failed, "leak: ") {
+				t.Fatalf("check said %.200q", rec.failed)
+			}
+		})
+	}
+}
+
+// A process that has not started the runtime's network poller yet: the first
+// socket starts it, and that is no leak. This has to be a process of its own,
+// without go test's timeout, whose timer would start the poller as well.
+func TestLeakCheckColdProcess(t *testing.T) {
+	const env = "SUNSPEC_EXPLORER_COLD_PROCESS"
+	if os.Getenv(env) != "" {
+		base := takeBaseline()
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Close()
+		_ = l.Close()
+		base.check(t)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLeakCheckColdProcess$")
+	cmd.Env = append(os.Environ(), env+"=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 }
 
