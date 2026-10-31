@@ -1,5 +1,17 @@
 # sunspec-explorer Releases
 
+## v0.1.2
+
+**Date:** 2026-10-31
+**Previous release:** v0.1.1
+
+### Fixed
+
+- The daemon's Host check refuses a malformed Host header. Stray brackets used to be trimmed off, so `]localhost` was taken for `localhost`. Brackets are now accepted only around an IPv6 literal.
+- Test only: the chaos and soak leak check no longer counts the Go runtime's network poller as a leak of two descriptors, and a leak report lists the descriptors.
+
+---
+
 ## v0.1.1
 
 **Date:** 2026-10-31
