@@ -1,4 +1,4 @@
-.PHONY: help all check test fuzz chaos soak coverage coverage-html coverage-check coverage-clean fmt fmt-check vet lint lint-ci vuln \
+.PHONY: help all check test e2e coverage-pkg-check fuzz chaos soak coverage coverage-html coverage-check coverage-clean fmt fmt-check vet lint lint-ci vuln \
 	frontend frontend-install frontend-check build build-gui build-daemon build-daemon-all bundle-macos appicon winres docker docker-all docker-run dev clean
 
 help: ## This help
@@ -40,6 +40,8 @@ LDFLAGS     = -ldflags "-s -w -X github.com/otfabric/sunspec-explorer/internal/b
 TEST_PKGS     := ./internal/engine/... ./internal/readonly/... ./internal/service/... ./internal/model/... ./internal/buildinfo/... \
 	./internal/api/... ./internal/web/... ./internal/daemon/... ./internal/settings/... ./cmd/sunspec-explorerd/...
 COVERAGE_MIN  := 90
+# Per-package floor (TEST-012): what the weakest package measures now, rounded down.
+COVER_PKG_MIN := 85
 
 # How long each fuzz target runs, how many seeds the chaos test goes through and how long
 # the soak test polls. A chaos or soak failure logs its seed; replay it with
@@ -51,7 +53,15 @@ SOAKTIME         ?= 2m
 
 all: check build ## Run all checks and build
 
-check: fmt fmt-check vet lint lint-ci vuln test coverage-check frontend-check ## Run all checks (Go and frontend)
+e2e: ## Build sunspec-explorerd and drive it as a process against a simulated device
+	@go test -count=1 -race ./e2e/...
+
+coverage-pkg-check: coverage-check ## Fail when a package is below COVER_PKG_MIN
+	@awk -v m="$(COVER_PKG_MIN)" 'NR > 1 { n[$$1] = $$2; if ($$3 > 0) h[$$1] = 1 } \
+	END { for (k in n) { p = k; sub(/\/[^\/]*$$/, "", p); s[p] += n[k]; if (k in h) c[p] += n[k] } \
+	for (p in s) { v = 100 * c[p] / s[p]; if (v < m) { printf "%s: %.1f%% < %s%%\n", p, v, m; bad = 1 } } exit bad }' coverage.out
+
+check: fmt fmt-check vet lint lint-ci vuln test coverage-pkg-check frontend-check ## Run all checks (Go and frontend)
 
 test: ## Run the Go tests with the race detector
 	@echo "Running tests (race detector)"
