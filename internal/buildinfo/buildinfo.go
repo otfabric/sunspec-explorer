@@ -19,8 +19,13 @@ func GoSunspecVersion() string {
 	if !ok {
 		return "unknown"
 	}
+	return moduleVersion(info, goSunspecPath)
+}
+
+// moduleVersion returns the version of the dependency at path, or "unknown".
+func moduleVersion(info *debug.BuildInfo, path string) string {
 	for _, dep := range info.Deps {
-		if dep.Path == goSunspecPath {
+		if dep.Path == path {
 			if dep.Replace != nil {
 				return dep.Replace.Version
 			}

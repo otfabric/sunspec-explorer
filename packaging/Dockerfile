@@ -12,14 +12,14 @@
 
 # The build stages run on the build machine's architecture and cross-compile:
 # the web UI is architecture-independent and the daemon is pure Go.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS ui
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build:web
 
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -41,7 +41,7 @@ RUN CGO_ENABLED=0 GOWORK=off GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVAR
 RUN mkdir /out/data
 
 # No shell, no libc, no package manager: the static binary and a user.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 LABEL org.opencontainers.image.title="sunspec-explorerd" \
       org.opencontainers.image.description="OT Fabric SunSpec Explorer daemon: read-only SunSpec engine with a web UI" \
       org.opencontainers.image.source="https://github.com/otfabric/sunspec-explorer" \
