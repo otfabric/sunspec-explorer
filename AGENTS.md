@@ -4,7 +4,7 @@ Status (2026-10-13): **M1 and the daemon part of M2/M3 are implemented**: engine
 
 ## Organisation standards
 
-This repository follows **otfabric/engineering policy 1.1**, profile **application** (`.otfabric/policy.yaml`); local exceptions are in `.otfabric/exceptions.yaml`. Where this file and the organisation standards disagree, this file wins for this repository; say so in your report.
+This repository follows **otfabric/engineering policy 1.2**, profile **application** (`.otfabric/policy.yaml`); local exceptions are in `.otfabric/exceptions.yaml`. Where this file and the organisation standards disagree, this file wins for this repository; say so in your report.
 
 ## What this is
 

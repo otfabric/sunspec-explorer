@@ -16,3 +16,11 @@ coverage.*
 
 # macOS
 .DS_Store
+
+# Build artefacts live in /bin/ and /release/ (otfabric/engineering REPO-005)
+*.test
+coverage.out
+
+# Output of a bare `go build`, anchored so it can never hide a source folder
+/cmd/sunspec-explorer/sunspec-explorer
+/cmd/sunspec-explorerd/sunspec-explorerd
