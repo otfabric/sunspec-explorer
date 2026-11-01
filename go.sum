@@ -20,8 +20,8 @@ github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHP
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
-github.com/otfabric/go-modbus v1.10.3 h1:aqNcwsOSkhiM1jkJTd5oabiySZAyGzGa86kZJLTSva4=
-github.com/otfabric/go-modbus v1.10.3/go.mod h1:LciyfLtd+4wKhQrDV5TjdrRH3NB60A+5d9bzTtGHQW4=
+github.com/otfabric/go-modbus v1.10.5 h1:ZVs82MLukfzTVAkOlhq8nE9v1DJ3dLik9rJRVpERbMc=
+github.com/otfabric/go-modbus v1.10.5/go.mod h1:LciyfLtd+4wKhQrDV5TjdrRH3NB60A+5d9bzTtGHQW4=
 github.com/otfabric/go-serial v0.2.1 h1:PCOdnCDAHIHFaxTBNmisC/4SlD+NVd74d+EJPnXrCOw=
 github.com/otfabric/go-serial v0.2.1/go.mod h1:TqbYpWWg6W+IuCLs8YM2cndlMAEaTyaKyUX6Z08gtq8=
 github.com/otfabric/go-sunspec v0.8.2 h1:b8IavXsNwMI+XsbRra+ORFWNSsrK6sjiLAw12KrZjo4=
