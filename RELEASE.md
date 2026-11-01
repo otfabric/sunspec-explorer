@@ -1,5 +1,17 @@
 # sunspec-explorer Releases
 
+## v0.1.4
+
+**Date:** 2026-11-01
+**Previous release:** v0.1.3
+
+### Changed
+
+- Dependency update, no other change. Picks up the go-modbus fix for a response that arrives during `Client.Close`.
+- Built on go-modbus v1.10.5, go-sunspec v0.8.3, go-serial v0.2.1.
+
+---
+
 ## v0.1.3
 
 **Date:** 2026-11-01
