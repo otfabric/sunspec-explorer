@@ -6,7 +6,7 @@ Thank you for your interest in contributing. Read [`AGENTS.md`](AGENTS.md) first
 
 ### Prerequisites
 
-- Go 1.25+ (see [go.mod](go.mod)); Wails v3 needs it. CI and releases build with the current stable Go, so that the binaries carry its security fixes; `go.mod` names the oldest version that works
+- Go 1.26+ (see [go.mod](go.mod)); Wails v3 needs it. CI and releases build with the current stable Go, so that the binaries carry its security fixes; `go.mod` names the oldest version that works
 - Node.js 22+ and npm for the frontend
 - [staticcheck](https://staticcheck.dev/), [golangci-lint](https://golangci-lint.run/) v2 and [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) for the checks
 - For the desktop application: a C compiler and the platform's webview (macOS: Xcode command line tools; Windows: WebView2 runtime; Linux: GTK4 and WebKitGTK 6.0)

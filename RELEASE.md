@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.2.0
+
+**Date:** 2026-11-05
+**Previous release:** v0.1.5
+
+### Changed
+
+- Go 1.26 or later is required to build from source (was 1.25). `go fix` modernised the code.
+- Built on go-sunspec v0.9.0: a scale factor outside -10..10 sent by a device is no longer applied, so the point shows its raw value instead of +Inf, 0 or NaN.
+- Built on go-modbus v1.11.1: RTU and ASCII links drain a late answer instead of returning it for the next request, RTU variable-length reads honour the deadline, and UDP drops bytes left over from a previous datagram.
+
+---
+
 ## v0.1.5
 
 **Date:** 2026-11-03

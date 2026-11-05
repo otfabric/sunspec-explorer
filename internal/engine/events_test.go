@@ -26,7 +26,7 @@ func drain(ch <-chan model.Event) []model.Event {
 }
 
 func publishN(h *hub, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		h.publish(model.Event{Kind: model.EventError})
 	}
 }
@@ -34,8 +34,7 @@ func publishN(h *hub, n int) {
 func TestHubReplay(t *testing.T) {
 	h := newHub(4)
 	publishN(h, 6) // the ring holds 3..6
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// New events only.
 	fresh := h.subscribe(ctx, 0)

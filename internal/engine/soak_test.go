@@ -101,11 +101,9 @@ func TestSoak(t *testing.T) {
 	}
 	w := newWatcher(t, info.ID)
 	var watching sync.WaitGroup
-	watching.Add(1)
-	go func() {
-		defer watching.Done()
+	watching.Go(func() {
 		w.watch(ch)
-	}()
+	})
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
 		t.Fatal(err)
 	}

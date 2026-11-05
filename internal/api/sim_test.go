@@ -62,7 +62,7 @@ func newSim(t testing.TB, models ...sunspec.ServerModel) *sim {
 	d.addr = l.Addr().String()
 	_ = l.Close()
 	var ms *modbus.Server
-	for attempt := 0; attempt < 20; attempt++ {
+	for range 20 {
 		ms, err = modbus.NewServer(&modbus.ServerConfig{
 			URL: "tcp://" + d.addr, MaxClients: 16, Logger: modbus.NopLogger(), Timeout: 30 * time.Second,
 		}, d)

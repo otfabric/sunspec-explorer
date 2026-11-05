@@ -421,7 +421,7 @@ func TestSystemdUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(string(unit), "\n") {
+	for line := range strings.SplitSeq(string(unit), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "#") {
 			continue
@@ -449,7 +449,7 @@ func TestNoWailsNoCgo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if strings.Contains(line, "wailsapp") || strings.Contains(line, "internal/gui") {
 			t.Errorf("the daemon depends on %s", line)
 		}

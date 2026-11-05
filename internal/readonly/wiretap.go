@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -47,7 +47,7 @@ func (w *WireTap) FunctionCodes() []uint8 {
 	for fc := range w.codes {
 		out = append(out, fc)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 

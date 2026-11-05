@@ -1,10 +1,10 @@
 module github.com/otfabric/sunspec-explorer
 
-go 1.25.0
+go 1.26.0
 
 require (
-	github.com/otfabric/go-modbus v1.10.6
-	github.com/otfabric/go-sunspec v0.8.5
+	github.com/otfabric/go-modbus v1.11.1
+	github.com/otfabric/go-sunspec v0.9.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/wailsapp/wails/v3 v3.0.0-beta.29
 )
