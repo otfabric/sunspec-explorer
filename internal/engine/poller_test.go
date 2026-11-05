@@ -39,16 +39,14 @@ func TestPolling(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 20; i++ {
+	wg.Go(func() {
+		for range 20 {
 			if _, err := e.Snapshot(ctx, info.ID, model.SnapshotRequest{}); err != nil {
 				t.Errorf("Snapshot during polling: %v", err)
 				return
 			}
 		}
-	}()
+	})
 
 	var prev time.Time
 	for seq := uint64(1); seq <= 5; seq++ {
@@ -121,7 +119,7 @@ func TestPollingExplicitScopeAndRestart(t *testing.T) {
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1, ModelIndexes: []int{idxCommon, idxMPPT2, idxCommon}}); err != nil {
 		t.Fatalf("StartPolling: %v", err)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		ev := waitEvent(t, ch, "sample", isSample)
 		if got := indexesOf(ev.Sample.Models); !slices.Equal(got, []int{idxCommon, idxMPPT2}) {
 			t.Errorf("models = %v", got)

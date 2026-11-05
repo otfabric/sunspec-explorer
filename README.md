@@ -165,7 +165,7 @@ In the desktop application, connect to `tcp://127.0.0.1:1502`, unit ID 1. For th
 
 ## Build from source
 
-Go 1.25 or later and Node.js 22 or later; for the desktop application also a C compiler and the platform's webview (Xcode command line tools, the WebView2 runtime, or GTK 4 and WebKitGTK 6.0).
+Go 1.26 or later and Node.js 22 or later; for the desktop application also a C compiler and the platform's webview (Xcode command line tools, the WebView2 runtime, or GTK 4 and WebKitGTK 6.0).
 
 ```sh
 make frontend-install   # once

@@ -121,8 +121,7 @@ func CodeOf(err error) string {
 	if err == nil {
 		return ""
 	}
-	var e *Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e.Code
 	}
 	return CodeInternal

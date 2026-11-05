@@ -52,9 +52,9 @@ func stdModels() []sunspec.ServerModel {
 	}
 
 	voltVar := (&sunspec.Values{}).Set("Ena", 1).Set("V_SF", -2).Set("DeptRef_SF", -2).Set("RspTms_SF", 0)
-	for c := 0; c < 2; c++ {
+	for range 2 {
 		crv := voltVar.Add("Crv", (&sunspec.Values{}).Set("ActPt", 3).Set("VRef", 1.0))
-		for p := 0; p < 3; p++ {
+		for p := range 3 {
 			crv.Add("Pt", (&sunspec.Values{}).Set("V", 0.9+0.05*float64(p)).Set("Var", 0.1*float64(p)))
 		}
 	}
@@ -142,7 +142,7 @@ func (d *sim) server() *sunspec.Server {
 func (d *sim) start() {
 	d.t.Helper()
 	var err error
-	for attempt := 0; attempt < 20; attempt++ {
+	for range 20 {
 		var ms *modbus.Server
 		ms, err = modbus.NewServer(&modbus.ServerConfig{
 			URL: d.url(), MaxClients: 16, Logger: modbus.NopLogger(), Timeout: 30 * time.Second,

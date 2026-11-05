@@ -154,12 +154,10 @@ func (p *chaosProxy) accept() {
 			continue
 		}
 		p.track(c)
-		p.wg.Add(1)
-		go func() {
-			defer p.wg.Done()
+		p.wg.Go(func() {
 			defer p.forget(c)
 			p.serve(c)
-		}()
+		})
 	}
 }
 
@@ -777,11 +775,9 @@ func chaosRun(t *testing.T, seed uint64) {
 	}
 	w := newWatcher(t, info.ID)
 	var watching sync.WaitGroup
-	watching.Add(1)
-	go func() {
-		defer watching.Done()
+	watching.Go(func() {
 		w.watch(ch)
-	}()
+	})
 
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
 		t.Fatal(err)
@@ -796,11 +792,9 @@ func chaosRun(t *testing.T, seed uint64) {
 	// fault plan on a loaded machine.
 	opCtx, stopOperator := context.WithCancel(context.Background())
 	var operating sync.WaitGroup
-	operating.Add(1)
-	go func() {
-		defer operating.Done()
+	operating.Go(func() {
 		operator(opCtx, t, e, info.ID, rand.New(rand.NewPCG(seed, 2)), unit)
-	}()
+	})
 	proxy.setMode(modeFaulty)
 	start := proxy.requestCount()
 	waitUntil(t, "the faulty phase", 2*time.Minute, func() bool { return proxy.requestCount()-start >= faultReq })

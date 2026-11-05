@@ -409,7 +409,7 @@ func TestEventsResume(t *testing.T) {
 	stop()
 
 	// Far more happens than the buffer holds: the client is told.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		cycle()
 	}
 	late, stopLate := context.WithCancel(ctx)
