@@ -130,14 +130,26 @@ vuln: ## Run govulncheck
 	@echo "Running govulncheck"
 	@govulncheck ./...
 
-frontend-install: ## Install the frontend dependencies (npm ci)
-	@cd frontend && npm ci
+# npm writes node_modules/.package-lock.json on every install: it is the
+# stamp of an install that matches package-lock.json. A fresh clone, or a
+# lock file that changed (git pull), installs before building.
+FRONTEND_DEPS := frontend/node_modules/.package-lock.json
 
-frontend: ## Build the frontend twice: dist/wails (desktop) and dist/web (served by the daemon)
+$(FRONTEND_DEPS): frontend/package.json frontend/package-lock.json
+	@command -v npm >/dev/null || { echo "npm not found: install Node.js 22 or later (https://nodejs.org)"; exit 1; }
+	@echo "Installing frontend dependencies (npm ci)"
+	@cd frontend && npm ci
+	@touch $@
+
+frontend-install: ## Install the frontend dependencies (npm ci)
+	@rm -f $(FRONTEND_DEPS)
+	@$(MAKE) --no-print-directory $(FRONTEND_DEPS)
+
+frontend: $(FRONTEND_DEPS) ## Build the frontend twice: dist/wails (desktop) and dist/web (served by the daemon)
 	@echo "Building frontend (wails + web)"
 	@cd frontend && npm run build
 
-frontend-check: ## Typecheck and test the frontend
+frontend-check: $(FRONTEND_DEPS) ## Typecheck and test the frontend
 	@echo "Checking frontend"
 	@cd frontend && npm run typecheck && npm test
 
