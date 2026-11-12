@@ -1,5 +1,16 @@
 # sunspec-explorer Releases
 
+## v0.2.1
+
+**Date:** 2026-11-13
+**Previous release:** v0.2.0
+
+### Changed
+
+- Built on go-sunspec v0.10.1, go-modbus v1.14.5 and go-serial v0.3.0 (was go-sunspec v0.9.0, go-modbus v1.11.1, go-serial v0.2.1). go-modbus wraps dial and TLS handshake errors with `modbus: dial <network> <addr>:`; go-serial rejects out-of-range serial parameters instead of truncating them. No other change.
+
+---
+
 ## v0.2.0
 
 **Date:** 2026-11-05
