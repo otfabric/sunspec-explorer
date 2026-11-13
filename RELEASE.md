@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.2.2
+
+**Date:** 2026-11-13
+**Previous release:** v0.2.1
+
+### Changed
+
+- Built on go-modbus v1.15.1 and go-sunspec v0.10.2 (was go-modbus v1.14.5 and go-sunspec v0.10.1). go-sunspec is a dependency bump only.
+- `rtu://` targets: after a timeout or an answer that does not match its request, the line is discarded until it is quiet, so the next read does not receive a late answer to an earlier one.
+- `rtuovertcp://` targets: the connection is closed and redialled after a request error or a mismatched answer. Expect more reconnects behind gateways where units often time out.
+
+---
+
 ## v0.2.1
 
 **Date:** 2026-11-13
