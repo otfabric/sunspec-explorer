@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.2.6
+
+**Date:** 2026-11-14
+**Previous release:** v0.2.5
+
+No change to the application.
+
+### Changed
+
+- Built on go-sunspec v0.11.0 (was v0.10.5) and go-modbus v1.16.0 (was v1.15.3) (go-sunspec RELEASE.md, v0.11.0; go-modbus RELEASE.md, v1.16.0). The explorer only reads devices; the changed behaviours of go-sunspec v0.11.0 (server callbacks, `WritePoint`, device files) are in parts it does not use. A callback of the Modbus client that does not return normally is recovered by the library and reported as an error of that request.
+
+---
+
 ## v0.2.5
 
 **Date:** 2026-11-14
