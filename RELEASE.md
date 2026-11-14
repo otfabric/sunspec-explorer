@@ -1,5 +1,19 @@
 # sunspec-explorer Releases
 
+## v0.2.3
+
+**Date:** 2026-11-14
+**Previous release:** v0.2.2
+
+No change to the application.
+
+### Changed
+
+- Built on go-sunspec v0.10.3 (was v0.10.2). Its library code is the same; it is built on go-modbus v1.15.1.
+- CI: otfabric/engineering policy 1.6, the shared actions v3.8.0, and one pull request workflow with a single required check.
+
+---
+
 ## v0.2.2
 
 **Date:** 2026-11-13
