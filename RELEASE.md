@@ -1,5 +1,23 @@
 # sunspec-explorer Releases
 
+## v0.2.5
+
+**Date:** 2026-11-14
+**Previous release:** v0.2.4
+
+No change to the application.
+
+### Changed
+
+- Built on go-modbus v1.15.3 (was v1.15.2) and go-sunspec v0.10.5 (was v0.10.4). In go-modbus v1.15.3, after a failed `Accept` the server waits before it tries again, a metrics hook that does not return normally is contained, an RTU request longer than a frame is refused before it is sent, and a request whose context ends while the deadline is set is not sent (go-modbus RELEASE.md, v1.15.3); the go-sunspec library code is unchanged. The previous release named go-modbus v1.15.2 for these changes; v1.15.2 was tagged without them (it holds go-serial v0.4.0 only), so they arrive with this release.
+
+### Tests
+
+- `TestPolling` failed now and then, on v0.2.4 too (5 of 60 runs under `-race`), in two checks. It now checks that no poll cycle reads before it is due, instead of a minimum time between two reads: a cycle's read starts once it has the connection, which a single read may hold. After `StopPolling` it allows the one request that was in flight when polling stopped and can reach the device afterwards. 200 runs under `-race` pass.
+- The leak check of the chaos and soak tests compared the number of goroutines, so a goroutine of an earlier test that ended during the check made up for one the test left running, and `TestLeakCheckFindsLeaks` failed now and then. It now reports the goroutines started since the baseline that still run, by ID. A new case of `TestLeakCheckFindsLeaks`, a goroutine left running while an older one ends, fails with the old check.
+
+---
+
 ## v0.2.4
 
 **Date:** 2026-11-14

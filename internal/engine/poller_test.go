@@ -34,6 +34,7 @@ func TestPolling(t *testing.T) {
 	ch := events(t, e)
 	info := mustOpen(t, e, d)
 
+	began := time.Now()
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
 		t.Fatalf("StartPolling: %v", err)
 	}
@@ -48,7 +49,6 @@ func TestPolling(t *testing.T) {
 		}
 	})
 
-	var prev time.Time
 	for seq := uint64(1); seq <= 5; seq++ {
 		ev := waitEvent(t, ch, "sample", isSample)
 		s := ev.Sample
@@ -70,10 +70,12 @@ func TestPolling(t *testing.T) {
 		if a := findPoint(t, findModel(t, s.Models, idxInverter).Group, "A"); a.Label != "" || a.Scaled == nil {
 			t.Errorf("sample point = %+v, want compact with a value", a)
 		}
-		if !prev.IsZero() && s.CapturedAt.Sub(prev) < tick/2 {
-			t.Errorf("samples %v apart, interval is %v", s.CapturedAt.Sub(prev), tick)
+		// Cycle n is due n-1 intervals after the start, and its read starts once
+		// it has the connection, which a Snapshot above may hold. So two reads
+		// can start closer together than the interval, but no cycle runs early.
+		if early := time.Duration(seq-1)*tick - s.CapturedAt.Sub(began); early > 0 {
+			t.Errorf("sample %d read %v before it was due", seq, early)
 		}
-		prev = s.CapturedAt
 	}
 	wg.Wait()
 
@@ -96,11 +98,14 @@ func TestPolling(t *testing.T) {
 	if st.Polling.Active {
 		t.Error("still active after stop")
 	}
-	// Nothing reads once polling has stopped.
+	// Nothing reads once polling has stopped. A request is one at a time, and
+	// the one written just before the stop was cancelled can still reach the
+	// device afterwards: the client drops the connection, not what it sent.
+	// A poller that went on would read every model again in each interval.
 	before := d.requests.Load()
 	time.Sleep(3 * tick)
-	if after := d.requests.Load(); after != before {
-		t.Errorf("%d requests after stop", after-before)
+	if after := d.requests.Load(); after-before > 1 {
+		t.Errorf("%d requests after stop, want at most the one in flight", after-before)
 	}
 }
 

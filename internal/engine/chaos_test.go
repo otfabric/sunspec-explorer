@@ -310,8 +310,14 @@ func chaosSeeds(t *testing.T) []uint64 {
 }
 
 // baseline is what a test started with, to tell what it left behind.
+//
+// Goroutines are told apart by ID, not counted: a goroutine of an earlier test
+// that ends during this one would make up for one this test leaves running.
+// The runtime never gives an ID out twice, but it gives them out in batches
+// per processor, so a newer goroutine can have a lower ID than an older one:
+// the baseline keeps the whole set.
 type baseline struct {
-	goroutines int
+	goroutines map[uint64]bool
 	files      int
 	open       []string
 	patience   time.Duration // how long what is left may take to go
@@ -325,7 +331,35 @@ type baseline struct {
 // timeout, so only -timeout=0 (make chaos, make soak) shows this.
 func takeBaseline() baseline {
 	startPoller()
-	return baseline{goroutines: runtime.NumGoroutine(), files: openFiles(), open: descriptors(), patience: 5 * time.Second}
+	ids, _ := goroutines()
+	set := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return baseline{goroutines: set, files: openFiles(), open: descriptors(), patience: 5 * time.Second}
+}
+
+// goroutines returns the IDs of the running goroutines, the calling one first,
+// and the stack dump they are read from.
+func goroutines() ([]uint64, string) {
+	buf := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	dump := string(buf)
+	var ids []uint64
+	for block := range strings.SplitSeq(dump, "\n\n") {
+		var id uint64
+		if _, err := fmt.Sscanf(block, "goroutine %d ", &id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids, dump
 }
 
 // startPoller makes sure that the runtime's network poller is running.
@@ -371,15 +405,20 @@ func (b baseline) check(t testing.TB) {
 	t.Helper()
 	deadline := time.Now().Add(b.patience)
 	for {
-		g, f := runtime.NumGoroutine(), openFiles()
-		if g <= b.goroutines && f <= b.files {
+		ids, dump := goroutines()
+		var started []uint64
+		for _, id := range ids[1:] { // ids[0] is the goroutine that checks
+			if !b.goroutines[id] {
+				started = append(started, id)
+			}
+		}
+		f := openFiles()
+		if len(started) == 0 && f <= b.files {
 			return
 		}
 		if time.Now().After(deadline) {
-			buf := make([]byte, 1<<20)
-			buf = buf[:runtime.Stack(buf, true)]
-			t.Fatalf("leak: %d goroutines (%d before), %d descriptors (%d before)\nbefore: %v\nnow: %v\n%s",
-				g, b.goroutines, f, b.files, b.open, descriptors(), buf)
+			t.Fatalf("leak: %d goroutines started since and still running %v, %d descriptors (%d before)\nbefore: %v\nnow: %v\n%s",
+				len(started), started, f, b.files, b.open, descriptors(), dump)
 		}
 		runtime.GC()
 		time.Sleep(20 * time.Millisecond)
@@ -400,22 +439,26 @@ func (r *fatalRecorder) Fatalf(format string, args ...any) {
 // The leak check itself: what a test leaves behind is found, whichever kind it
 // is. A leak check that cannot fail would pass.
 func TestLeakCheckFindsLeaks(t *testing.T) {
+	leakGoroutine := func(*testing.T) func() {
+		stop, stopped := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(stopped)
+			<-stop
+		}()
+		return func() {
+			close(stop)
+			<-stopped
+		}
+	}
 	for _, tc := range []struct {
 		name  string
 		files bool
+		older bool // a goroutine of before the baseline ends during the check
 		leak  func(t *testing.T) (release func())
 	}{
-		{name: "goroutine", leak: func(*testing.T) func() {
-			stop, stopped := make(chan struct{}), make(chan struct{})
-			go func() {
-				defer close(stopped)
-				<-stop
-			}()
-			return func() {
-				close(stop)
-				<-stopped
-			}
-		}},
+		{name: "goroutine", leak: leakGoroutine},
+		// By count, the one that ends makes up for the one left running.
+		{name: "goroutine while an older one ends", older: true, leak: leakGoroutine},
 		{name: "file", files: true, leak: func(t *testing.T) func() {
 			f, err := os.CreateTemp(t.TempDir(), "leak")
 			if err != nil {
@@ -438,12 +481,21 @@ func TestLeakCheckFindsLeaks(t *testing.T) {
 				t.Skip("this system does not list descriptors")
 			}
 			rec := &fatalRecorder{TB: t}
+			older := make(chan struct{})
+			if tc.older {
+				go func() { <-older }()
+			} else {
+				close(older)
+			}
 			done := make(chan struct{})
 			go func() { // a goroutine of its own, because check ends in Goexit
 				defer close(done)
 				base := takeBaseline()
 				base.patience = 100 * time.Millisecond
 				defer tc.leak(t)()
+				if tc.older {
+					close(older)
+				}
 				base.check(rec)
 			}()
 			<-done
