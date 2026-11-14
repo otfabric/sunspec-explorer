@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.2.4
+
+**Date:** 2026-11-14
+**Previous release:** v0.2.3
+
+No change to the application.
+
+### Changed
+
+- Built on go-modbus v1.15.2 (was v1.15.1) and go-sunspec v0.10.4 (was v0.10.3): go-modbus v1.15.2 backs off after a failed `Accept`, contains a metrics hook that does not return normally, refuses an RTU request longer than a frame before sending it, and does not send a request whose context ended while the deadline was set (go-modbus RELEASE.md, v1.15.2); the go-sunspec library code is unchanged.
+
+---
+
 ## v0.2.3
 
 **Date:** 2026-11-14
