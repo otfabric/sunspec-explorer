@@ -425,6 +425,7 @@ export class MockService implements Service {
       registry_models: DEVICE.length - 1,
       time: new Date().toISOString(),
       features: ['recording', 'serial', 'tls'],
+      read_only_violations: 0,
     };
   }
 

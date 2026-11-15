@@ -16,12 +16,20 @@ const subscriberBuffer = 256
 
 // hub numbers events, keeps the most recent ones for replay and fans them out
 // to subscribers without ever blocking the publisher.
+//
+// A sample is as large as the device makes it. Of the sample events in the
+// ring, only the newest of each open session keeps its sample (the one the
+// session holds as its last sample anyway); the others keep their place and
+// number but nothing else, and a replay skips them. What the ring retains
+// therefore does not grow with the number of samples.
 type hub struct {
 	mu   sync.Mutex
 	seq  uint64
-	ring []model.Event // oldest first, at most size entries
+	ring []model.Event // oldest first, at most size entries; numbered without gaps
 	size int
-	subs map[*subscriber]struct{}
+	// latest is the number of each session's newest sample event in the ring.
+	latest map[string]uint64
+	subs   map[*subscriber]struct{}
 }
 
 type subscriber struct {
@@ -32,7 +40,7 @@ type subscriber struct {
 }
 
 func newHub(size int) *hub {
-	return &hub{size: size, subs: make(map[*subscriber]struct{})}
+	return &hub{size: size, latest: make(map[string]uint64), subs: make(map[*subscriber]struct{})}
 }
 
 // publish assigns the next sequence number to ev and delivers it.
@@ -45,13 +53,45 @@ func (h *hub) publish(ev model.Event) {
 		ev.At = time.Now().UTC()
 	}
 	if len(h.ring) == h.size {
+		if old := h.ring[0]; old.Kind == model.EventSample && h.latest[old.SessionID] == old.Seq {
+			delete(h.latest, old.SessionID)
+		}
 		copy(h.ring, h.ring[1:])
 		h.ring = h.ring[:h.size-1]
+	}
+	switch {
+	case ev.Kind == model.EventSample:
+		h.strip(ev.SessionID)
+		h.latest[ev.SessionID] = ev.Seq
+	case ev.Kind == model.EventSessionStatus && ev.Session != nil && ev.Session.Status == model.SessionClosed:
+		h.strip(ev.SessionID)
 	}
 	h.ring = append(h.ring, ev)
 	for s := range h.subs {
 		s.deliver(ev)
 	}
+}
+
+// strip drops the sample, and the recording counters that came with it, from
+// the session's newest sample event in the ring. The caller holds h.mu.
+func (h *hub) strip(sessionID string) {
+	seq, ok := h.latest[sessionID]
+	if !ok {
+		return
+	}
+	delete(h.latest, sessionID)
+	if len(h.ring) == 0 || seq < h.ring[0].Seq {
+		return
+	}
+	if i := seq - h.ring[0].Seq; i < uint64(len(h.ring)) {
+		h.ring[i].Sample, h.ring[i].Recording = nil, nil
+	}
+}
+
+// replayable reports whether a replay sends ev: every event but a sample
+// event whose sample was stripped.
+func replayable(ev model.Event) bool {
+	return ev.Kind != model.EventSample || ev.Sample != nil
 }
 
 // deliver sends ev without blocking. A subscriber that is full misses the
@@ -72,7 +112,8 @@ func (s *subscriber) deliver(ev model.Event) {
 }
 
 // subscribe registers a subscriber and replays the events after sinceSeq that
-// are still in the ring. When some of them are gone, a resync comes first.
+// are still in the ring, of the sample events only the newest of each open
+// session. When some events are gone, a resync comes first.
 func (h *hub) subscribe(ctx context.Context, sinceSeq uint64) <-chan model.Event {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -85,7 +126,7 @@ func (h *hub) subscribe(ctx context.Context, sinceSeq uint64) <-chan model.Event
 		replay = []model.Event{{Seq: h.seq, Kind: model.EventResync, At: time.Now().UTC()}}
 	case sinceSeq > 0 && sinceSeq < h.seq:
 		for _, ev := range h.ring {
-			if ev.Seq > sinceSeq {
+			if ev.Seq > sinceSeq && replayable(ev) {
 				replay = append(replay, ev)
 			}
 		}

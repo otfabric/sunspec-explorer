@@ -45,6 +45,37 @@ No interface of the Explorer accepts a raw Modbus frame, a function code, a regi
 - **Targets.** The daemon connects only to the networks it is allowed to (`--allow-target`; by default private and link-local ranges), so that a token holder cannot use a gateway to probe other networks. A host name is checked when the session is opened; a name that later resolves elsewhere is not re-checked.
 - **Other addresses.** Binding anything but loopback needs `--allow-remote-bind`. The listener is plain HTTP: on such an address the token is readable on the network. Use the SSH port forward instead.
 - **Data directory.** Created with mode 0700; a symbolic link, another owner or wider permissions are refused.
+- **Read-only evidence.** A request with any function code but 3 and 4 that some code path tried is refused before it is sent, logged once at error level, and counted in `read_only_violations` of `GET /api/v1/health`. Anything but 0 there is a defect: please report it.
+
+### Resource Limits
+
+What a client, a device and the daemon's operator can make the Explorer use. "Client" means a holder of the token (the web UI, the API); the desktop application applies the same engine limits.
+
+| What | Limit | Set by |
+|---|---|---|
+| Open sessions | 4 | `--max-sessions` |
+| Request body | 64 KiB | fixed |
+| Time to send a request's headers | 10 s | fixed |
+| Time to send a request's body | 30 s, from the end of its headers | fixed |
+| Connection without a request | closed after 120 s | fixed |
+| Open connections | not limited by the daemon; the bind rules decide who can connect, the token who is served | — |
+| Event stream | a comment line every 15 s keeps it open; it lasts as long as its client stays | fixed |
+| Poll interval | 1 s to 3600 s, default 5 s | client |
+| Modbus request timeout | 100 ms to 60 s, default 3 s | client (`timeout_ms`) |
+| Base addresses probed | at most 16 | client |
+| Models read from a chain | at most 1024; 0 selects go-sunspec's default | client (`max_models`) |
+| Pause between two model reads | 0 to 10 s, default 0 | `--request-delay` |
+| Events kept for replay | 1024; of the sample events only the newest of each open session keeps its sample | fixed |
+| Events a subscriber may fall behind | 256, then a `resync` | fixed |
+| Size of a recording | 64 MiB, then it is stopped | `--max-recording-mb` |
+| Size of all recordings | 256 MiB, then the running ones are stopped and none starts | `--max-recordings-mb` |
+| Size of a recording file | 16 MiB, then the recording continues in a new file | `--rotate-recording-mb`; a client may ask for 64 KiB up to the size of a recording (`rotate_bytes`) |
+| Free space left alone | 64 MiB | `--min-free-mb` (0 switches the check off) |
+| Duration of a recording | 7 days | fixed |
+| Line of a recording read back | 16 MiB | fixed |
+| Recording name | 1 to 64 letters, digits, dots, dashes and underscores, not starting with a dot | fixed |
+| Size flags (`--*-mb`) | at least 1 (`--min-free-mb`: 0), at most 8796093022207, the largest number of MiB whose bytes fit a 64-bit integer | — |
+| Requests still running at a stop (SIGINT, SIGTERM) | 5 s, then they are cut off and the daemon exits with status 1 | fixed |
 
 ### SunSpec Modbus Has No Built-In Security
 

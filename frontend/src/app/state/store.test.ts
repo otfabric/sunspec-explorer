@@ -228,6 +228,7 @@ describe('engine health', () => {
     registry_models: 100,
     time: '2026-10-14T10:00:00Z',
     features: ['recording'],
+    read_only_violations: 0,
     ...extra,
   });
 

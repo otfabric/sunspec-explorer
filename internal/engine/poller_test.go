@@ -98,15 +98,12 @@ func TestPolling(t *testing.T) {
 	if st.Polling.Active {
 		t.Error("still active after stop")
 	}
-	// Nothing reads once polling has stopped. A request is one at a time, and
-	// the one written just before the stop was cancelled can still reach the
-	// device afterwards: the client drops the connection, not what it sent.
-	// A poller that went on would read every model again in each interval.
-	before := d.requests.Load()
-	time.Sleep(3 * tick)
-	if after := d.requests.Load(); after-before > 1 {
-		t.Errorf("%d requests after stop, want at most the one in flight", after-before)
-	}
+	// Nothing reads once polling has stopped: StopPolling waits for the
+	// running cycle, and the poll goroutine ends with it, so no later cycle
+	// starts. (A request written just before the stop was cancelled can still
+	// reach the device afterwards: the client drops the connection, not what
+	// it sent. That is not a cycle.)
+	waitNoPollers(t)
 }
 
 func TestPollingExplicitScopeAndRestart(t *testing.T) {

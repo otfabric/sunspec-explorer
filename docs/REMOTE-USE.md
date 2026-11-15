@@ -41,7 +41,7 @@ In the page, connect to the device with an address **as the gateway sees it** (f
 
 ## What to expect
 
-- **The tunnel drops.** The daemon keeps its sessions and keeps polling. The page says "connection lost", retries, and when the tunnel is back it continues where it stopped: missed events are replayed, or the page tells you that some were missed if the gap was too long.
+- **The tunnel drops.** The daemon keeps its sessions and keeps polling. The page says "connection lost", retries, and when the tunnel is back it continues where it stopped: missed events are replayed (of the samples, the newest of each session, which is what the page shows), or the page tells you that some were missed if the gap was too long. A recording keeps every sample.
 - **Recording.** A recording runs on the daemon and continues without the page. Recordings are kept in the data directory (64 MiB each, 256 MiB together by default: `--max-recording-mb`, `--max-recordings-mb`; and recording stops when less than 64 MiB are free where they are kept: `--min-free-mb`); save a copy through the page, which downloads it. After a daemon restart a recording that was running is listed as interrupted and can still be saved.
 - **You close the tab.** Same: the session stays open on the daemon. Open the URL again and the page picks it up. Disconnect in the page to close it.
 - **The token.** It is the only credential: treat the URL like a password. It is created on the first start, kept in a file only the daemon's user can read, and stays the same across restarts. Replace it with `sunspec-explorerd token rotate`: the old URL stops working within a second, without a restart.
@@ -73,6 +73,8 @@ Two things to know:
 
 - **Never add `PrivateTmp=yes` to the unit** if you use the default data directory: systemd deletes a private `/tmp` whenever the service stops, and the token and recordings with it.
 - **The URL is not in the journal.** The daemon prints the URL with its token at startup only when it writes to a terminal. As a service it writes one line that names the command instead; get the URL with `sunspec-explorerd url`, as above.
+
+On `systemctl stop` (SIGTERM) the daemon ends its event streams and gives running requests 5 s. It exits with status 0 when they ended in time, and with status 1, logging that requests were cut off, when it had to close them; it also exits with 1 on any error. The resource limits the daemon applies are listed in [`SECURITY.md`](../SECURITY.md#resource-limits).
 
 ## Debian 11, 12 and 13
 

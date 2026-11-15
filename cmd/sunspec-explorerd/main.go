@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,6 +50,10 @@ Usage:
 Remote use: run the daemon on the gateway, forward its port from your
 workstation with "ssh -N -L 8765:127.0.0.1:8765 user@gateway", and open the
 URL that "sunspec-explorerd url" prints in a browser.
+
+Exit status: 0 after a stop on SIGINT or SIGTERM in which every request
+ended within 5 s; 1 on an error, and when requests still running 5 s after
+the signal had to be cut off.
 
 Flags of the daemon:
 `
@@ -179,6 +185,15 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	if *minFree < 0 {
 		return errors.New("--min-free-mb must not be negative")
 	}
+	// Checked before they are converted to bytes, which must fit an int64.
+	for name, mib := range map[string]int64{
+		"--max-recording-mb": *maxRecording, "--max-recordings-mb": *maxRecordings,
+		"--rotate-recording-mb": *rotate, "--min-free-mb": *minFree,
+	} {
+		if mib > maxMiB {
+			return fmt.Errorf("%s %d is too large: at most %d", name, mib, int64(maxMiB))
+		}
+	}
 	minFreeBytes := *minFree << 20
 	if *minFree == 0 {
 		minFreeBytes = -1 // off
@@ -232,17 +247,12 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	// shutdown waiting.
 	reqCtx, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
-	srv := &http.Server{
-		Handler: api.New(eng, api.Options{
-			Token:  tokens.Token,
-			Hosts:  daemon.Hosts(bound, allowHosts),
-			UI:     ui,
-			Logger: log,
-		}),
-		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return reqCtx },
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-	}
+	srv := newServer(api.New(eng, api.Options{
+		Token:  tokens.Token,
+		Hosts:  daemon.Hosts(bound, allowHosts),
+		UI:     ui,
+		Logger: log,
+	}), reqCtx, log, daemonTimeouts)
 
 	log.Info("sunspec-explorerd started", "version", buildinfo.Version, "listen", bound,
 		"data_dir", p.dataDir, "new_token", created, "ui", ui != nil)
@@ -266,12 +276,73 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, ready chan<-
 	}
 	log.Info("shutting down")
 	cancelRequests()
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdown); err != nil {
-		_ = srv.Close()
+	return shutdown(srv, shutdownTimeout)
+}
+
+// What a client can make the HTTP server wait for. A request body has the
+// deadline of api.DefaultBodyTimeout. There is no bound on a whole request:
+// an event stream lasts as long as its client stays.
+type serverTimeouts struct {
+	readHeader time.Duration // to send the headers of a request
+	idle       time.Duration // between two requests on one connection
+}
+
+var daemonTimeouts = serverTimeouts{readHeader: 10 * time.Second, idle: 120 * time.Second}
+
+// shutdownTimeout is how long a stopping daemon waits for running requests.
+const shutdownTimeout = 5 * time.Second
+
+// maxMiB is the largest size flag, in MiB, whose number of bytes fits an
+// int64.
+const maxMiB = math.MaxInt64 >> 20
+
+// httpServer is the daemon's HTTP server and the number of requests it is
+// serving.
+type httpServer struct {
+	*http.Server
+	running atomic.Int64
+}
+
+// newServer returns the daemon's HTTP server. Requests get their context
+// from base, which ends with the daemon.
+func newServer(handler http.Handler, base context.Context, log *slog.Logger, timeouts serverTimeouts) *httpServer {
+	srv := &httpServer{}
+	srv.Server = &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv.running.Add(1)
+			defer srv.running.Add(-1)
+			handler.ServeHTTP(w, r)
+		}),
+		ReadHeaderTimeout: timeouts.readHeader,
+		IdleTimeout:       timeouts.idle,
+		BaseContext:       func(net.Listener) context.Context { return base },
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
-	return nil
+	return srv
+}
+
+// shutdown stops srv: it waits up to timeout for the requests that are still
+// running, then closes what is left. It returns an error when requests had
+// to be cut off, so that the daemon exits with status 1. A connection that
+// has not sent a request yet (a client may open one ahead of time) is waited
+// for too, but closing it cuts nothing off.
+func shutdown(srv *httpServer, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err := srv.Shutdown(ctx)
+	if err == nil {
+		return nil
+	}
+	running := srv.running.Load()
+	_ = srv.Close()
+	switch {
+	case !errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("shutdown: %w", err)
+	case running == 0:
+		return nil
+	default:
+		return fmt.Errorf("shutdown: %d requests still running after %v were cut off: %w", running, timeout, err)
+	}
 }
 
 // announce tells how to open the daemon. The URL carries the token, so it is

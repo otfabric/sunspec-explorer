@@ -308,11 +308,12 @@ func TestRecordingNeedsDataDir(t *testing.T) {
 // Rotation by size, and reading the files as one stream from any offset.
 func TestRecordingRotation(t *testing.T) {
 	d := newSim(t)
-	e := recEngine(t, t.TempDir(), RecordingLimits{})
+	// Files far smaller than a client may ask for: the operator's limit.
+	e := recEngine(t, t.TempDir(), RecordingLimits{RotateBytes: 6000})
 	ch := events(t, e)
 	info := mustOpen(t, e, d)
 
-	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "rot", RotateBytes: 6000}); err != nil {
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "rot"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
@@ -562,10 +563,10 @@ func TestRecordingFreeSpaceFloor(t *testing.T) {
 func TestRecordingRecovery(t *testing.T) {
 	dir := t.TempDir()
 	d := newSim(t)
-	e := recEngine(t, dir, RecordingLimits{})
+	e := recEngine(t, dir, RecordingLimits{RotateBytes: 8000})
 	ch := events(t, e)
 	info := mustOpen(t, e, d)
-	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "long", RotateBytes: 8000}); err != nil {
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "long"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {

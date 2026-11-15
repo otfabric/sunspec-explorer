@@ -17,7 +17,10 @@ type poller struct {
 	done   chan struct{}
 }
 
-// startPolling starts polling, replacing a running poller.
+// startPolling starts polling, replacing a running poller. Stopping the old
+// poller and installing the new one is one step: concurrent calls, and a
+// concurrent stopPolling or close, see one or the other, never neither. Once
+// the session is closing it returns not_found.
 func (s *session) startPolling(cfg model.PollConfig) error {
 	if cfg.IntervalS == 0 {
 		cfg.IntervalS = DefaultIntervalS
@@ -26,20 +29,21 @@ func (s *session) startPolling(cfg model.PollConfig) error {
 		return service.Errorf(service.CodeInvalidArgument, "poll interval %d s is out of range (%d..%d)",
 			cfg.IntervalS, MinIntervalS, MaxIntervalS)
 	}
-	s.mu.Lock()
-	n := len(s.info.Models)
-	closed := s.info.Status == model.SessionClosed
-	s.mu.Unlock()
-	if closed {
+	s.life.Lock()
+	defer s.life.Unlock()
+	if s.closing {
 		return notFound(s.id)
 	}
+	s.mu.Lock()
+	n := len(s.info.Models)
+	s.mu.Unlock()
 	for _, i := range cfg.ModelIndexes {
 		if i < 0 || i >= n {
 			return service.Errorf(service.CodeInvalidArgument, "model index %d is out of range (0..%d)", i, n-1)
 		}
 	}
 
-	s.stopPolling()
+	s.stopPollingLocked()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &poller{cancel: cancel, done: make(chan struct{})}
@@ -63,6 +67,13 @@ func (s *session) startPolling(cfg model.PollConfig) error {
 
 // stopPolling stops the poller and waits until its cycle has ended.
 func (s *session) stopPolling() {
+	s.life.Lock()
+	defer s.life.Unlock()
+	s.stopPollingLocked()
+}
+
+// stopPollingLocked is stopPolling for a caller that holds s.life.
+func (s *session) stopPollingLocked() {
 	s.mu.Lock()
 	p := s.poll
 	s.poll = nil

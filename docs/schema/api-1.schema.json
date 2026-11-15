@@ -10,7 +10,7 @@
       "additionalProperties": false,
       "required": [
         "status", "version", "api_version", "uptime_s", "go_sunspec", "registry_models", "time",
-        "features"
+        "features", "read_only_violations"
       ],
       "properties": {
         "status": { "type": "string", "description": "ok." },
@@ -20,7 +20,8 @@
         "go_sunspec": { "type": "string", "description": "Version of the go-sunspec library." },
         "registry_models": { "type": "integer", "minimum": 0, "description": "Number of SunSpec model schemas the library knows." },
         "time": { "type": "string", "format": "date-time", "description": "The engine's clock, for clients to notice a skew." },
-        "features": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "What this engine is set up for beyond the basics. Known features: recording, serial, tls." }
+        "features": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "What this engine is set up for beyond the basics. Known features: recording, serial, tls." },
+        "read_only_violations": { "type": "integer", "minimum": 0, "description": "Requests the engine's Modbus clients refused because their function code is not a register read (FC03, FC04). None of them reached a device; a value above 0 means that some code path tried to send one, and the engine logs the first at error level." }
       }
     },
     "SerialConfig": {
@@ -308,7 +309,7 @@
       "additionalProperties": false,
       "required": ["seq", "kind", "at"],
       "properties": {
-        "seq": { "type": "integer", "minimum": 0, "description": "Increases by one per event of an engine; the id of the server-sent event. A resync carries the number of the last event before it." },
+        "seq": { "type": "integer", "minimum": 0, "description": "Increases by one per event of an engine; the id of the server-sent event. A resync carries the number of the last event before it. A replay (since, Last-Event-ID) sends, of the sample events, only the newest of each open session, so replayed numbers can have gaps." },
         "kind": { "enum": ["sample", "session_status", "discovery_changed", "recording_status", "error", "resync"], "description": "sample: a poll cycle ended (sample; recording with the counters while the session records). session_status: a session was opened, closed, lost or found again (session). discovery_changed: the model chain was discovered again (session). recording_status: a recording started or stopped (recording). error: something failed in the background (message). resync: the subscriber missed events and must fetch the state of its sessions again." },
         "session_id": { "type": "string", "description": "Omitted for a resync." },
         "at": { "type": "string", "format": "date-time" },
@@ -362,7 +363,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "pattern": "^([a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63})?$", "description": "Base name of the recording files, never a path. Empty or absent lets the engine choose one." },
-        "rotate_bytes": { "type": "integer", "minimum": 0, "description": "Start a new file after this many bytes. 0 or absent selects the engine default." }
+        "rotate_bytes": { "description": "Start a new file after this many bytes: 65536 (64 KiB) up to the engine's maximum recording size (64 MiB by default, --max-recording-mb), which is not part of this schema. 0 or absent selects the engine default.", "anyOf": [{ "const": 0 }, { "type": "integer", "minimum": 65536 }] }
       }
     },
     "RecordingInfo": {

@@ -35,6 +35,10 @@ const (
 	// temporary directory in RAM that space is the system's memory.
 	DefaultMinFreeBytes     = 64 << 20
 	DefaultMaxRecordingTime = 7 * 24 * time.Hour
+	// MinRotateBytes is the smallest file size a client may ask a recording
+	// to rotate at (model.RecordingConfig.RotateBytes); the largest is the
+	// engine's RecordingLimits.MaxBytes.
+	MinRotateBytes = 64 << 10
 
 	recordingsDir = "recordings"
 	metaSuffix    = ".meta.json"
@@ -264,8 +268,10 @@ func (st *recStore) start(sessionID string, cfg model.RecordingConfig, header mo
 		return nil, service.Errorf(service.CodeInvalidArgument,
 			"recording name %q: use 1 to 64 letters, digits, dots, dashes and underscores, not starting with a dot", name)
 	}
-	if cfg.RotateBytes < 0 {
-		return nil, service.Errorf(service.CodeInvalidArgument, "rotate_bytes must not be negative")
+	if cfg.RotateBytes != 0 && (cfg.RotateBytes < MinRotateBytes || cfg.RotateBytes > st.limits.MaxBytes) {
+		return nil, service.Errorf(service.CodeInvalidArgument,
+			"rotate_bytes %d is out of range: 0 for the default, or %d..%d (the size at which a recording is stopped)",
+			cfg.RotateBytes, int64(MinRotateBytes), st.limits.MaxBytes)
 	}
 
 	st.mu.Lock()

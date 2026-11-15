@@ -146,11 +146,13 @@ func parseTarget(cfg model.TargetConfig) (*target, error) {
 		return invalid("register type %q: use %q or %q", cfg.RegType, model.RegTypeHolding, model.RegTypeInput)
 	}
 	if cfg.TimeoutMS != 0 {
-		t.timeout = time.Duration(cfg.TimeoutMS) * time.Millisecond
-		if t.timeout < minTimeout || t.timeout > maxTimeout {
+		// Compared before the conversion: a product that does not fit a
+		// Duration must not wrap into the range.
+		if int64(cfg.TimeoutMS) < minTimeout.Milliseconds() || int64(cfg.TimeoutMS) > maxTimeout.Milliseconds() {
 			return invalid("timeout %d ms is out of range (%d..%d)", cfg.TimeoutMS,
 				minTimeout.Milliseconds(), maxTimeout.Milliseconds())
 		}
+		t.timeout = time.Duration(cfg.TimeoutMS) * time.Millisecond
 	}
 	if cfg.MaxModels < 0 || cfg.MaxModels > 1024 {
 		return invalid("max models %d is out of range (0..1024)", cfg.MaxModels)

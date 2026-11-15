@@ -4,6 +4,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -106,5 +108,109 @@ func TestHubSlowSubscriber(t *testing.T) {
 		case <-deadline:
 			t.Fatal("channel not closed after cancel")
 		}
+	}
+}
+
+// fullSamples counts the sample events in the ring that still carry their
+// sample.
+func fullSamples(h *hub) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, ev := range h.ring {
+		if ev.Sample != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func heapInUse() int64 {
+	runtime.GC()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return int64(m.HeapAlloc)
+}
+
+// Of the sample events in the ring, only the newest of each open session
+// keeps its sample: what the ring retains does not grow with the number of
+// samples or their size. A replay sends those samples and every other event.
+func TestHubKeepsNewestSamplePerSession(t *testing.T) {
+	const registers = 4 << 10 // 8 KiB a sample
+	h := newHub(DefaultEventBuffer)
+	before := heapInUse()
+	for i := range 2 * DefaultEventBuffer {
+		sid := []string{"a", "b"}[i%2]
+		h.publish(model.Event{Kind: model.EventSample, SessionID: sid, Sample: &model.Sample{
+			SessionID: sid, Seq: uint64(i/2 + 1),
+			Models: []model.ModelResult{{RawRegisters: make([]uint16, registers)}},
+		}, Recording: &model.RecordingInfo{Samples: uint64(i)}})
+	}
+	h.publish(model.Event{Kind: model.EventError, SessionID: "a"})
+	retained := heapInUse() - before
+	if n := fullSamples(h); n != 2 {
+		t.Errorf("%d sample events in the ring carry their sample, want 2", n)
+	}
+	// Two samples of 8 KiB and the ring itself; every sample kept would be
+	// 8 MiB.
+	if budget := int64(2 << 20); retained > budget {
+		t.Errorf("the ring retains %d bytes, more than %d", retained, budget)
+	}
+
+	replay := func(since uint64) (kinds []string) {
+		for _, ev := range drain(h.subscribe(t.Context(), since)) {
+			kind := ev.Kind
+			if ev.Kind == model.EventSample {
+				kind = fmt.Sprintf("%s:%s:%d", ev.Kind, ev.SessionID, ev.Seq)
+				if ev.Sample == nil || ev.Recording == nil || len(ev.Sample.Models[0].RawRegisters) != registers {
+					t.Errorf("replayed sample %d is incomplete", ev.Seq)
+				}
+			}
+			kinds = append(kinds, kind)
+		}
+		return kinds
+	}
+	last := uint64(2 * DefaultEventBuffer)
+	want := fmt.Sprint([]string{model.EventResync, fmt.Sprintf("sample:a:%d", last-1), fmt.Sprintf("sample:b:%d", last), model.EventError})
+	if got := fmt.Sprint(replay(1)); got != want {
+		t.Errorf("replay = %.300s, want %s", got, want)
+	}
+
+	// A closed session keeps no sample in the ring.
+	h.publish(model.Event{Kind: model.EventSessionStatus, SessionID: "a",
+		Session: &model.SessionInfo{ID: "a", Status: model.SessionClosed}})
+	if n := fullSamples(h); n != 1 {
+		t.Errorf("%d sample events carry their sample after a session closed, want 1", n)
+	}
+	want = fmt.Sprint([]string{fmt.Sprintf("sample:b:%d", last), model.EventError, model.EventSessionStatus})
+	if got := fmt.Sprint(replay(last - 2)); got != want {
+		t.Errorf("replay after the close = %s, want %s", got, want)
+	}
+	runtime.KeepAlive(h)
+}
+
+// The same through the engine: while a session polls, the ring holds its
+// newest sample only, and none once the session is closed.
+func TestEventRingWhilePolling(t *testing.T) {
+	d := newSim(t)
+	e := New(Options{EventBuffer: 16})
+	e.second = time.Millisecond
+	t.Cleanup(e.Close)
+	ch := events(t, e)
+	info := mustOpen(t, e, d)
+	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
+		t.Fatal(err)
+	}
+	waitEvent(t, ch, "more samples than the ring holds", func(ev model.Event) bool {
+		return isSample(ev) && ev.Sample.Seq > 40
+	})
+	if n := fullSamples(e.hub); n != 1 {
+		t.Errorf("%d sample events in the ring carry their sample while polling, want 1", n)
+	}
+	if err := e.CloseSession(ctx, info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := fullSamples(e.hub); n != 0 {
+		t.Errorf("%d sample events carry their sample after the close, want 0", n)
 	}
 }
