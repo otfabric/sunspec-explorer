@@ -1,5 +1,20 @@
 # sunspec-explorer Releases
 
+## v0.2.9
+
+**Date:** 2026-11-15
+**Previous release:** v0.2.8
+
+No change to the application.
+
+### Changed
+
+- Built on go-sunspec v0.12.0 (was v0.11.1) (go-sunspec RELEASE.md, v0.12.0). The explorer only reads devices; of the changed behaviours of go-sunspec v0.12.0, the device-file export is the one it uses:
+  - A model with a string point that is not valid UTF-8 is exported by its registers, so `sunspecctl serve` gives a device that reads the same. Before, such a string was exported as a point value that did not read back the same.
+  - A model the device reports without data registers is exported as `"registers": []`, which `sunspecctl serve` refuses as a model that does not match its layout. Before, the model was exported without values and served at its schema's length.
+
+---
+
 ## v0.2.8
 
 **Date:** 2026-11-15
