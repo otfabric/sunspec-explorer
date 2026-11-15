@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.2.8
+
+**Date:** 2026-11-15
+**Previous release:** v0.2.7
+
+No change to the application.
+
+### Changed
+
+- Built on go-sunspec v0.11.1 (was v0.11.0), go-modbus v1.16.1 (was v1.16.0) and go-serial v0.4.1 (was v0.4.0): on Windows a serial write that times out returns an error together with the bytes written, where it returned a short count without one; on Linux, macOS and the BSDs a port path that is not a character device is refused when it is opened; reads wait correctly on OpenBSD (go-serial RELEASE.md, v0.4.1). This reaches devices on a serial line.
+
+---
+
 ## v0.2.6
 
 **Date:** 2026-11-14
