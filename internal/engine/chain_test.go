@@ -71,14 +71,23 @@ func TestChainCutShortHealsOnSnapshot(t *testing.T) {
 	addr := stdAddress(t, idxMPPT1)
 	d := newSim(t)
 	d.setFilter(falseEnd(addr))
-	e := newEngine(t, time.Millisecond)
+	e := newEngine(t, time.Second)
+	var later atomic.Int64 // how far the test moved the clock of the check
+	e.now = func() time.Time { return time.Now().Add(time.Duration(later.Load())) }
 	info := mustOpen(t, e, d)
-	time.Sleep(chainCheckEvery / time.Second * e.second)
+	again := func(w string) bool { return strings.Contains(w, "discovered again") }
+
+	// Not due yet: the snapshot reads the chain it has.
 	snap, err := e.Snapshot(ctx, info.ID, model.SnapshotRequest{})
+	if err != nil || slices.ContainsFunc(snap.Warnings, again) {
+		t.Fatalf("snapshot before the check is due = %v, %v", snap.Warnings, err)
+	}
+	later.Store(int64(chainCheckEvery))
+	snap, err = e.Snapshot(ctx, info.ID, model.SnapshotRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(snap.Warnings, func(w string) bool { return strings.Contains(w, "discovered again") }) {
+	if !slices.ContainsFunc(snap.Warnings, again) {
 		t.Errorf("no word of the re-discovery: %v", snap.Warnings)
 	}
 	st, err := e.State(ctx, info.ID)

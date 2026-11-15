@@ -104,6 +104,9 @@ type Engine struct {
 	// second is the unit of poll intervals and backoff delays. It is one
 	// second; tests shorten it.
 	second time.Duration
+	// now is the clock of the chain check (session.chainStale). It is
+	// time.Now; tests move it forward.
+	now func() time.Time
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -132,8 +135,9 @@ func New(opts Options) *Engine {
 		log:      log,
 		started:  time.Now(),
 		hub:      newHub(opts.EventBuffer),
-		guard:    &readonly.Guard{},
+		guard:    &readonly.Guard{Logger: log},
 		second:   time.Second,
+		now:      time.Now,
 		sessions: make(map[string]*session),
 	}
 	if opts.DataDir != "" {
@@ -172,14 +176,15 @@ func (e *Engine) Close() {
 // Health implements service.Service.
 func (e *Engine) Health(context.Context) (model.Health, error) {
 	return model.Health{
-		Status:         "ok",
-		Version:        buildinfo.Version,
-		APIVersion:     model.APIVersion,
-		UptimeS:        int64(time.Since(e.started).Seconds()),
-		GoSunspec:      buildinfo.GoSunspecVersion(),
-		RegistryModels: registry.Count(),
-		Time:           time.Now().UTC(),
-		Features:       e.features(),
+		Status:             "ok",
+		Version:            buildinfo.Version,
+		APIVersion:         model.APIVersion,
+		UptimeS:            int64(time.Since(e.started).Seconds()),
+		GoSunspec:          buildinfo.GoSunspecVersion(),
+		RegistryModels:     registry.Count(),
+		Time:               time.Now().UTC(),
+		Features:           e.features(),
+		ReadOnlyViolations: e.guard.Violations(),
 	}, nil
 }
 

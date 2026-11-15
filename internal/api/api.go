@@ -38,6 +38,9 @@ const (
 	// DefaultKeepAlive is the interval of the comment lines that keep an idle
 	// event stream open through proxies and tunnels.
 	DefaultKeepAlive = 15 * time.Second
+	// DefaultBodyTimeout is how long a client may take to send a request
+	// body, counted from the end of its headers.
+	DefaultBodyTimeout = 30 * time.Second
 )
 
 // Options configures the handler.
@@ -55,6 +58,8 @@ type Options struct {
 	UI http.Handler
 	// KeepAlive overrides DefaultKeepAlive.
 	KeepAlive time.Duration
+	// BodyTimeout overrides DefaultBodyTimeout.
+	BodyTimeout time.Duration
 	// Logger receives request errors. Nil discards them.
 	Logger *slog.Logger
 }
@@ -74,6 +79,9 @@ func New(svc service.Service, opts Options) http.Handler {
 	}
 	if s.opts.KeepAlive <= 0 {
 		s.opts.KeepAlive = DefaultKeepAlive
+	}
+	if s.opts.BodyTimeout <= 0 {
+		s.opts.BodyTimeout = DefaultBodyTimeout
 	}
 	for _, h := range opts.Hosts {
 		s.hosts[strings.ToLower(h)] = true
@@ -103,6 +111,12 @@ func New(svc service.Service, opts Options) http.Handler {
 	})
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A request body has a deadline, also one that is never read: before
+		// the server answers a refused request, it reads what the client still
+		// sends. decode lifts the deadline once it has the body.
+		if r.ContentLength != 0 {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.opts.BodyTimeout))
+		}
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
@@ -316,10 +330,12 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = body.Close() }()
 
-	length := info.SizeBytes - start
-	if end >= 0 && end-start+1 < length {
-		length = end - start + 1
+	// A range that ends beyond the recording is cut first, so that the length
+	// is computed from values that fit.
+	if end < 0 || end >= info.SizeBytes {
+		end = info.SizeBytes - 1
 	}
+	length := end - start + 1
 	h := w.Header()
 	h.Set("Content-Type", "application/x-ndjson")
 	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", info.Name+".jsonl"))
@@ -435,6 +451,8 @@ func (s *server) decode(w http.ResponseWriter, r *http.Request, v any) bool {
 		s.fail(w, r, service.Errorf(service.CodeInvalidArgument, "request body is too large or unreadable"))
 		return false
 	}
+	// The body is in: the operation may take as long as it takes.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return true
 	}

@@ -34,6 +34,8 @@ export interface Health {
   /** The engine's clock. */
   time: Timestamp;
   features: Feature[];
+  /** Requests the engine's Modbus clients refused for a function code other than FC03 and FC04; none reached a device. */
+  read_only_violations: number;
 }
 
 export interface AppInfo {

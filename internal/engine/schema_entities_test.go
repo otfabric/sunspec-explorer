@@ -320,7 +320,7 @@ func TestEntitiesMatchPublishedSchema(t *testing.T) {
 	sch.check("SnapshotRequest", "an empty snapshot request", model.SnapshotRequest{})
 	sch.check("SnapshotRequest", "a snapshot request", model.SnapshotRequest{ModelIndexes: []int{1}, Metadata: model.MetadataCompact, IncludeRaw: true})
 	sch.check("RecordingConfig", "an empty recording configuration", model.RecordingConfig{})
-	sch.check("RecordingConfig", "a recording configuration", model.RecordingConfig{Name: "run-1", RotateBytes: 6000})
+	sch.check("RecordingConfig", "a recording configuration", model.RecordingConfig{Name: "run-1", RotateBytes: 1 << 20})
 	export := sch.check("ExportRequest", "an export request", map[string]string{"format": model.ExportDeviceFile})
 
 	// Errors, with and without probe attempts.

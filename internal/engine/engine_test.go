@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -406,6 +408,67 @@ func TestHealthAndStubs(t *testing.T) {
 	}
 	if e.Guard() == nil {
 		t.Error("no guard")
+	}
+}
+
+// logRecords keeps the records of a logger.
+type logRecords struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (l *logRecords) Enabled(context.Context, slog.Level) bool { return true }
+func (l *logRecords) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *logRecords) WithGroup(string) slog.Handler            { return l }
+func (l *logRecords) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	l.records = append(l.records, r.Clone())
+	l.mu.Unlock()
+	return nil
+}
+
+// count returns the number of records at level whose message contains msg.
+func (l *logRecords) count(level slog.Level, msg string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, r := range l.records {
+		if r.Level == level && strings.Contains(r.Message, msg) {
+			n++
+		}
+	}
+	return n
+}
+
+// A request the read-only allow-list refused shows in the health answer and,
+// the first time, in the log.
+func TestHealthCountsReadOnlyViolations(t *testing.T) {
+	d := newSim(t)
+	logs := &logRecords{}
+	e := New(Options{Logger: slog.New(logs)})
+	t.Cleanup(e.Close)
+	info := mustOpen(t, e, d)
+	if h, _ := e.Health(ctx); h.ReadOnlyViolations != 0 {
+		t.Fatalf("read_only_violations = %d before any refusal", h.ReadOnlyViolations)
+	}
+	s, err := e.session(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.acquire(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.client.WriteRegister(ctx, 1, 40000, 0); !errors.Is(err, modbus.ErrFunctionCodeNotAllowed) {
+			t.Errorf("write = %v, want ErrFunctionCodeNotAllowed", err)
+		}
+	}
+	s.release()
+	if h, err := e.Health(ctx); err != nil || h.ReadOnlyViolations != 2 || h.Status != "ok" {
+		t.Errorf("Health = %+v, %v; want read_only_violations 2", h, err)
+	}
+	if n := logs.count(slog.LevelError, "read-only"); n != 1 {
+		t.Errorf("%d error records about the refusals, want 1", n)
 	}
 }
 

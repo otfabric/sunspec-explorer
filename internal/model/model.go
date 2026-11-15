@@ -85,6 +85,11 @@ type Health struct {
 	// Features lists what this engine is set up for beyond the basics:
 	// "recording", "serial", "tls".
 	Features []string `json:"features"`
+	// ReadOnlyViolations is the number of requests the engine's Modbus
+	// clients refused because their function code is not a register read
+	// (FC03, FC04). Nothing reaches a device that way; any value above zero
+	// means that some code path tried to send one.
+	ReadOnlyViolations uint64 `json:"read_only_violations"`
 }
 
 // Features of an engine.
@@ -378,8 +383,9 @@ type RecordingConfig struct {
 	// Name is the base name of the recording files: [a-zA-Z0-9._-]{1,64}.
 	// Empty lets the engine choose one.
 	Name string `json:"name,omitempty"`
-	// RotateBytes starts a new file after this many bytes. Zero selects the
-	// engine default.
+	// RotateBytes starts a new file after this many bytes: 65536 (64 KiB)
+	// up to the engine's maximum recording size. Zero selects the engine
+	// default.
 	RotateBytes int64 `json:"rotate_bytes,omitempty"`
 }
 

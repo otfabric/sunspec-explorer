@@ -484,10 +484,10 @@ func TestExportSession(t *testing.T) {
 // A recording converts to CSV as it is read, sample numbers included.
 func TestRecordingCSV(t *testing.T) {
 	d := newSim(t, stdModels()[:2]...)
-	e := recEngine(t, t.TempDir(), RecordingLimits{})
+	e := recEngine(t, t.TempDir(), RecordingLimits{RotateBytes: 4000})
 	ch := events(t, e)
 	info := mustOpen(t, e, d)
-	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "csv", RotateBytes: 4000}); err != nil {
+	if _, err := e.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "csv"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {

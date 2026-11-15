@@ -1,5 +1,40 @@
 # sunspec-explorer Releases
 
+## v0.3.0
+
+**Date:** 2026-11-15
+**Previous release:** v0.2.9
+
+Bounds on what a connection, a request body and the event buffer can hold; starting and stopping polling and recording are one step with closing a session; refused read-only requests are visible in the health answer. The API version stays 1.0: the health field is an addition.
+
+### Breaking
+
+Behaviour a client or an operator can notice, with the way back where there is one:
+
+- The replay of the event stream (`since`, `Last-Event-ID`) sends, of the sample events still in the buffer, only the newest of each open session; the others are left out, so the `seq` of replayed events can have gaps. The live stream is unchanged, and so is what the web UI and the desktop application show after a reconnect: they show the newest sample. Way back for a client that needs every sample: record the session (`POST /api/v1/sessions/{id}/recordings`) and download the recording.
+- `rotate_bytes` of a recording is 0 (the default) or from 65536 (64 KiB) up to the size at which a recording is stopped (`--max-recording-mb`, 64 MiB by default); other values are refused with `invalid_argument`. Before, any positive value was used. Way back: ask for 64 KiB or more, or send 0 and let the operator set `--rotate-recording-mb`.
+- `timeout_ms` of a target is checked as sent: a value outside 100..60000 is refused with `invalid_argument`, also where its conversion to a duration used to wrap into that range.
+- `--max-recording-mb`, `--max-recordings-mb`, `--rotate-recording-mb` and `--min-free-mb` above 8796093022207 (the largest number of MiB whose bytes fit a 64-bit integer) are refused at start. Before, such a value became another size, for `--min-free-mb` the switched-off check. Way back: `--min-free-mb 0` switches the free-space check off.
+- The daemon exits with status 1 when requests still running 5 s after SIGINT or SIGTERM had to be cut off, and says so on standard error (the journal under systemd); before, it exited with 0. A clean stop is still 0, also when a connection that had not sent a request yet was closed.
+- The daemon closes a connection that carries no request for 120 s, and answers and closes a request whose body has not arrived 30 s after its headers. Browsers and HTTP clients open a new connection on their own; an event stream is a running request and stays open.
+
+### Added
+
+- `read_only_violations` in `GET /api/v1/health` (`model.Health`, `Health` in `docs/schema/api-1.schema.json`): the number of requests with a function code other than 3 and 4 that the read-only allow-list refused before they were sent. The first one is also logged at error level. It is 0 unless something is wrong.
+- `SECURITY.md` lists every resource limit with its value; `TESTING.md` has the lifecycle contract matrix (L1–L16) of the engine and the daemon.
+
+### Fixed
+
+- Two `StartPolling` calls at once on one session, or a `StartPolling` or `StartRecording` that ran while the session closed, could leave a poller or a recording running that `StopPolling`, `CloseSession` and the engine's close no longer reached. Starting, stopping and closing are now one step per session: a start on a session that is closing returns `not_found`, and no poller or recording outlives `StopPolling`, `CloseSession` or the daemon's stop.
+- A download whose `Range` ends at the largest number a client can write gets the rest of the recording with a correct `Content-Range` and `Content-Length`, like any range that ends beyond the recording.
+
+### Other
+
+- Lifecycle contract tests for the engine (`internal/engine/lifecycle_test.go`): closing twice and from two goroutines, closing during a blocked read and during `OpenSession`, starts racing a close; they synchronise on events and run with `-race -count=20`. Tests of what the event buffer keeps, of the shutdown bound and of the connection and body timeouts.
+- The two tests that waited with a sleep now wait for an event: polling has stopped when its goroutine has ended, and the chain check reads a clock the test moves.
+
+---
+
 ## v0.2.9
 
 **Date:** 2026-11-15

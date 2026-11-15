@@ -14,6 +14,8 @@ package readonly
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +40,10 @@ func Allowed(fc modbus.FunctionCode) bool {
 // the Explorer must never send. Set it as Config.Metrics; a Guard can be
 // shared by all clients.
 type Guard struct {
+	// Logger, when set, receives one error record, for the first refused
+	// request; Violations counts all of them.
+	Logger *slog.Logger
+
 	requests   atomic.Uint64
 	violations atomic.Uint64
 }
@@ -55,10 +61,16 @@ func (g *Guard) OnRequest(_ uint8, fc modbus.FunctionCode) {
 // OnResponse does nothing.
 func (g *Guard) OnResponse(uint8, modbus.FunctionCode, time.Duration) {}
 
-// OnError counts a request the allow-list refused.
-func (g *Guard) OnError(_ uint8, _ modbus.FunctionCode, _ time.Duration, err error) {
-	if errors.Is(err, modbus.ErrFunctionCodeNotAllowed) {
-		g.violations.Add(1)
+// OnError counts a request the allow-list refused. The first one is also
+// logged.
+func (g *Guard) OnError(unit uint8, fc modbus.FunctionCode, _ time.Duration, err error) {
+	if !errors.Is(err, modbus.ErrFunctionCodeNotAllowed) {
+		return
+	}
+	if g.violations.Add(1) == 1 && g.Logger != nil {
+		g.Logger.Error("read-only: a request with a function code other than FC03 and FC04 was refused before it was sent; "+
+			"read_only_violations in the health answer counts them",
+			"function_code", fmt.Sprintf("0x%02X", uint8(fc)), "unit", unit)
 	}
 }
 

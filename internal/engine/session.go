@@ -31,11 +31,20 @@ const commonModelID = 1
 // holds it is the only one talking to the device. dev is read and replaced
 // only while holding it. mu guards the remaining fields and is never held
 // during I/O.
+//
+// life serializes what starts and ends the poller and the recording:
+// startPolling, stopPolling, startRecording and close. It is held while a
+// stopped poller finishes its cycle, so it is taken before mu and never by
+// anyone holding mu or the io token. closing is set by close, under life:
+// from then on nothing new starts.
 type session struct {
 	id     string
 	eng    *Engine
 	target *target
 	client *modbus.Client
+
+	life    sync.Mutex
+	closing bool
 
 	io  chan struct{}
 	dev *sunspec.Device
@@ -127,13 +136,16 @@ func (s *session) snapshotInfo() model.SessionInfo {
 	return s.info
 }
 
-// startRecording starts recording the session's samples.
+// startRecording starts recording the session's samples. Once the session
+// is closing it returns not_found.
 func (s *session) startRecording(cfg model.RecordingConfig) (model.RecordingInfo, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.info.Status == model.SessionClosed {
+	s.life.Lock()
+	defer s.life.Unlock()
+	if s.closing {
 		return model.RecordingInfo{}, notFound(s.id)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.rec != nil {
 		return model.RecordingInfo{}, service.Errorf(service.CodeInvalidArgument,
 			"the session is recording already (%s): stop that recording first", s.rec.snapshot().Name)
@@ -176,10 +188,16 @@ func (s *session) record(kind, detail string, models []model.ModelInfo) {
 	}
 }
 
-// close stops polling, ends the recording and closes the connection.
+// close stops polling, ends the recording and closes the connection. Once it
+// has begun, startPolling and startRecording return not_found, so no poller
+// and no recording outlives it.
 func (s *session) close() {
-	s.stopPolling()
-	if rec := s.recording(); rec != nil {
+	s.life.Lock()
+	s.closing = true
+	s.stopPollingLocked()
+	rec := s.recording()
+	s.life.Unlock()
+	if rec != nil {
 		s.eng.endRecording(rec, model.StopSessionClosed)
 	}
 	// Wait for a running read to finish: it owns the connection.
@@ -288,7 +306,7 @@ func (s *session) discover(ctx context.Context) error {
 	if hdrs := dev.Discovery.Raw.Models; len(hdrs) > 0 && hdrs[len(hdrs)-1].IsEndModel {
 		s.endAt, s.hasEnd = hdrs[len(hdrs)-1].StartAddress, true
 	}
-	s.chainCheckAt = time.Now().Add(s.backoffUnit(chainCheckEvery))
+	s.chainCheckAt = s.eng.now().Add(s.backoffUnit(chainCheckEvery))
 	s.mu.Lock()
 	s.info.Target.BaseAddress = dev.Discovery.BaseAddress
 	s.info.Target.RegType = regTypeName(dev.Discovery.RegType)
@@ -329,10 +347,10 @@ func (s *session) rediscover(ctx context.Context) error {
 // marker and the identity with the device. A read that fails says nothing:
 // the poll cycle accounts for that.
 func (s *session) chainStale(ctx context.Context) bool {
-	if time.Now().Before(s.chainCheckAt) {
+	if s.eng.now().Before(s.chainCheckAt) {
 		return false
 	}
-	s.chainCheckAt = time.Now().Add(s.backoffUnit(chainCheckEvery))
+	s.chainCheckAt = s.eng.now().Add(s.backoffUnit(chainCheckEvery))
 	for n, inst := range s.dev.Discovery.Models {
 		if n > 0 && !s.pace(ctx) {
 			return false

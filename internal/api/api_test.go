@@ -3,10 +3,12 @@
 package api_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -191,6 +193,51 @@ func TestRequestErrors(t *testing.T) {
 	}
 }
 
+// A request body that does not arrive within the body timeout ends the
+// request and the connection, whether the request is served or refused.
+func TestRequestBodyDeadline(t *testing.T) {
+	d := newDaemon(t, engine.Options{}, api.Options{BodyTimeout: 50 * time.Millisecond})
+	for _, c := range []struct {
+		name, token string
+		status      int
+	}{
+		{"refused", "", http.StatusUnauthorized},
+		{"served", testToken, http.StatusBadRequest},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			conn, err := net.Dial("tcp", d.srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close() }()
+			// The test's own bound: far beyond the body timeout.
+			_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+			head := "POST /api/v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 100\r\n"
+			if c.token != "" {
+				head += "Authorization: Bearer " + c.token + "\r\n"
+			}
+			if _, err := io.WriteString(conn, head+"\r\n{\"url\":"); err != nil {
+				t.Fatal(err)
+			}
+			r := bufio.NewReader(conn)
+			res, err := http.ReadResponse(r, nil)
+			if err != nil {
+				t.Fatalf("no answer: %v", err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
+			if res.StatusCode != c.status {
+				t.Errorf("status = %d, want %d", res.StatusCode, c.status)
+			}
+			// EOF, or a reset on some systems; not the test's own deadline.
+			var ne net.Error
+			if n, err := r.Read(make([]byte, 1)); n != 0 || err == nil || errors.As(err, &ne) && ne.Timeout() {
+				t.Errorf("after the answer: %d, %v; want the connection closed", n, err)
+			}
+		})
+	}
+}
+
 // fake is a service whose failures are not service errors.
 type fake struct {
 	service.Service
@@ -241,14 +288,15 @@ func TestInternalErrorsAndDownload(t *testing.T) {
 // R7: a recording downloads while it runs and afterwards, whole or from an
 // offset, so that a download that broke off can be resumed.
 func TestDownloadRanges(t *testing.T) {
-	d := newDaemon(t, engine.Options{DataDir: t.TempDir()}, api.Options{})
+	// Files of 5000 bytes, smaller than a client may ask for: the operator's limit.
+	d := newDaemon(t, engine.Options{DataDir: t.TempDir(), Recording: engine.RecordingLimits{RotateBytes: 5000}}, api.Options{})
 	dev := newSim(t)
 	info, err := d.svc.OpenSession(ctx, dev.cfg())
 	if err != nil {
 		t.Fatal(err)
 	}
 	events, _ := d.svc.Subscribe(ctx, 0)
-	if _, err := d.svc.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "dl", RotateBytes: 5000}); err != nil {
+	if _, err := d.svc.StartRecording(ctx, info.ID, model.RecordingConfig{Name: "dl"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.svc.StartPolling(ctx, info.ID, model.PollConfig{IntervalS: 1}); err != nil {
@@ -294,6 +342,18 @@ func TestDownloadRanges(t *testing.T) {
 	// A range that ends beyond the recording is cut.
 	if status, _, part := get("bytes=10-99999999"); status != http.StatusPartialContent || part != whole[10:] {
 		t.Errorf("long range = %d, %d bytes", status, len(part))
+	}
+	// Also the widest closed range a client can write: the length is that
+	// of the recording.
+	for _, rng := range []string{"bytes=0-9223372036854775807", "bytes=1-9223372036854775807", "bytes=0-9223372036854775806"} {
+		status, header, part := get(rng)
+		from, _ := strconv.Atoi(rng[len("bytes="):strings.IndexByte(rng, '-')])
+		if status != http.StatusPartialContent || part != whole[from:] ||
+			header.Get("Content-Range") != "bytes "+strconv.Itoa(from)+"-"+strconv.Itoa(len(whole)-1)+"/"+total ||
+			header.Get("Content-Length") != strconv.Itoa(len(whole)-from) {
+			t.Errorf("Range %q = %d %q, Content-Length %q, %d bytes", rng, status, header.Get("Content-Range"),
+				header.Get("Content-Length"), len(part))
+		}
 	}
 	if status, header, _ := get("bytes=" + strconv.Itoa(len(whole)+1) + "-"); status != http.StatusRequestedRangeNotSatisfiable ||
 		header.Get("Content-Range") != "bytes */"+total {

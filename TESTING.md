@@ -60,6 +60,31 @@ The 24-hour soak of A14 at a 1 s interval: `TestSoak` compresses it, polling at 
 - `TestNoWailsNoCgo` in `cmd/sunspec-explorerd` runs `go list` to check that the daemon links no Wails package and nothing that needs cgo (A12).
 - `schema_test.go` in `internal/api` validates output against `docs/schema/`.
 
+## Lifecycle contract matrix
+
+The rows of the engineering standards' matrix (lifecycle.md, L1–L16) for the long-lived types: `engine.Engine` with its sessions, their pollers and recordings; the event hub's subscriptions; the recording store; the daemon's `http.Server` (`runServe`). `daemon.TokenSource` only rereads a file, and `gui.App` cannot run without Wails. The tests decide the interleaving with events (a held log record, a device that holds a read, the I/O token held by the test) and with the state of the goroutines involved, read from the runtime's stack dump (`internal/engine/lifecycle_test.go`); a condition they wait for is polled with a bound. None sleeps.
+
+| Row | Covered by | Gap or reason |
+|---|---|---|
+| L1 Close twice | `TestCloseConcurrently`: `CloseSession` and `Engine.Close` again after the close; `not_found`, nothing changes | — |
+| L2 Two goroutines call Close | `TestCloseConcurrently`: two `CloseSession` and two `Engine.Close` at once while the session polls and records; every call returns, at most one `CloseSession` returns nil, one `closed` event, no poller left, the recording stopped | — |
+| L3 Close during a blocked read | `TestCloseSessionDuringBlockedRead`: `CloseSession` waits for the read, which the request timeout ends, and returns after it. A session never closes the connection under a read: the read ends with its Modbus timeout, not with a closed error | — |
+| L4 Close during a write | n/a: only the holder of the I/O token uses the connection, go-modbus writes each request whole, and `close` takes the token first | — |
+| L5 Close during handshake | `TestEngineCloseDuringOpen`: `Engine.Close` while `OpenSession` discovers; the open fails ("engine is closed"), no session is listed, goroutines and descriptors return to the baseline. The TLS handshake is go-modbus's | — |
+| L6 Cancel a pending request | `TestSnapshotContext` (a deadline while the token is held) | does not assert that the next request on the session succeeds |
+| L7 Response after the request timed out | go-modbus; `TestChaosPolling` injects late answers and other transaction numbers | — |
+| L8 Response after reconnect | go-modbus; `TestChaosPolling` drops connections | — |
+| L9, L10 Callback calls a public method or Close | n/a: no callbacks; events are delivered over channels (`events.go`) | — |
+| L11 Slow callback | `TestHubSlowSubscriber` | — |
+| L12 Queue at capacity | `TestHubSlowSubscriber` (drop, then resync), `TestEventsResume` (small ring), `TestHubKeepsNewestSamplePerSession` and `TestEventRingWhilePolling` (what the ring keeps of samples) | — |
+| L13 Concurrent sessions | sessions share only the hub and the guard | no test with two sessions polling at once |
+| L14 Failure during construction | `TestOpenSessionFailures` (codes), `TestEngineCloseDuringOpen` (baseline after a failed open); the chaos baseline checks leaks at the end of its run | no per-case leak assertion in `TestOpenSessionFailures` |
+| L15 `Shutdown(ctx)` | `TestShutdownTimeout` in `cmd/sunspec-explorerd`: a request still running after the bound is cut off and `shutdown` returns the deadline (exit status 1); a server with nothing running stops with nil. `TestSignalStops` in `e2e` | — |
+| L16 Close racing reconnect | n/a in the engine: reconnecting is go-modbus's, and a closed client is not reopened | — |
+| Start and stop racing close (engine) | `TestStartPollingConcurrent` (two restarts at once, then `StopPolling`: one poller in between, none after), `TestStartPollingRacesClose`, `TestStartRecordingRacesClose` (a start on a session that is closing returns `not_found` and starts nothing) | — |
+
+Run them with the race detector and repeated: `go test -race -count=20 -run 'Concurrent|Races|During' ./internal/engine`.
+
 ## Coverage policy
 
 `TEST_PKGS` is the engine, the daemon and what they are built from. `cmd/sunspec-explorer` and `internal/gui` are excluded: the Wails shell needs a window. `codecov.yml` ignores `cmd/**`, `internal/gui/**` and `frontend/**`.

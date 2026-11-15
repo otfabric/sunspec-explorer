@@ -3,10 +3,13 @@
 package readonly
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -175,5 +178,30 @@ func TestWireTapUpstreamDown(t *testing.T) {
 	}
 	if len(tap.FunctionCodes()) != 0 {
 		t.Error("codes recorded")
+	}
+}
+
+// The first refused request is logged at Error level; later ones are only
+// counted. Other errors are neither.
+func TestGuardLogsFirstViolation(t *testing.T) {
+	var out bytes.Buffer
+	g := &Guard{Logger: slog.New(slog.NewTextHandler(&out, nil))}
+	g.OnError(1, modbus.FCReadHoldingRegisters, 0, modbus.ErrIllegalDataAddress)
+	if g.Violations() != 0 || out.Len() != 0 {
+		t.Fatalf("another error: violations %d, log %q", g.Violations(), out.String())
+	}
+	for _, fc := range []modbus.FunctionCode{0x06, 0x10, 0x05} {
+		g.OnError(7, fc, 0, modbus.ErrFunctionCodeNotAllowed)
+	}
+	log := strings.ReplaceAll(out.String(), "\r\n", "\n")
+	if g.Violations() != 3 || strings.Count(log, "\n") != 1 || !strings.Contains(log, "level=ERROR") ||
+		!strings.Contains(log, "function_code=0x06") || !strings.Contains(log, "unit=7") {
+		t.Errorf("violations %d, log %q; want 3 and one record of the first", g.Violations(), log)
+	}
+	// Without a logger it only counts.
+	quiet := &Guard{}
+	quiet.OnError(1, 0x06, 0, modbus.ErrFunctionCodeNotAllowed)
+	if quiet.Violations() != 1 {
+		t.Errorf("violations = %d", quiet.Violations())
 	}
 }
