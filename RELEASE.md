@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.3.1
+
+**Date:** 2026-11-16
+**Previous release:** v0.3.0
+
+No feature is added or changed.
+
+### Changed
+
+- Built on go-modbus v1.16.2 (was v1.16.1), go-serial v0.5.0 (was v0.4.1) and go-sunspec v0.12.1 (was v0.12.0) (go-modbus RELEASE.md, v1.16.2; go-serial RELEASE.md, v0.5.0; go-sunspec RELEASE.md, v0.12.1).
+
+---
+
 ## v0.3.0
 
 **Date:** 2026-11-15
