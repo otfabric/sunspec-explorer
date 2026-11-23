@@ -9,7 +9,7 @@ No feature is added or changed.
 
 ### Changed
 
-- Built on go-modbus v1.22.0 (was v1.17.0) (go-modbus RELEASE.md, v1.18.0..v1.22.0). The explorer uses the go-modbus client only and reads with FC 03 and 04; none of the changed behaviours of go-modbus v1.18.0..v1.22.0 (the server changes, and the client changes to FC 08, 12, 20, 43 and `ProbeFunction`) is in a part it uses, and it implements none of the new optional metrics interfaces. go-sunspec stays at v0.12.2.
+- Built on go-modbus v1.23.0 (was v1.17.0) (go-modbus RELEASE.md, v1.18.0..v1.23.0). The explorer uses the go-modbus client only and reads with FC 03 and 04; none of the changed behaviours of go-modbus v1.18.0..v1.22.0 (the server changes, and the client changes to FC 08, 12, 20, 43 and `ProbeFunction`) is in a part it uses, and it implements none of the new optional metrics interfaces. go-modbus v1.23.0 changes nothing for the explorer: its RTU fix concerns FC 43/14 and FC 08 responses, which the explorer does not request, and the rest is server-side and opt-in (go-modbus RELEASE.md, v1.23.0). go-sunspec stays at v0.12.2.
 
 ---
 
