@@ -1,5 +1,18 @@
 # sunspec-explorer Releases
 
+## v0.3.3
+
+**Date:** 2026-11-23
+**Previous release:** v0.3.2
+
+No feature is added or changed.
+
+### Changed
+
+- Built on go-modbus v1.22.0 (was v1.17.0) (go-modbus RELEASE.md, v1.18.0..v1.22.0). The explorer uses the go-modbus client only and reads with FC 03 and 04; none of the changed behaviours of go-modbus v1.18.0..v1.22.0 (the server changes, and the client changes to FC 08, 12, 20, 43 and `ProbeFunction`) is in a part it uses, and it implements none of the new optional metrics interfaces. go-sunspec stays at v0.12.2.
+
+---
+
 ## v0.3.2
 
 **Date:** 2026-11-16
